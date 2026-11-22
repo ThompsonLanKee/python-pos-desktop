@@ -1,147 +1,488 @@
 
 import sqlite3
 
+from contextlib import closing
 from pathlib import Path
 
 
-# Project root directory
+# ==================================================
+# DATABASE CONFIGURATION
+# ==================================================
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 
-# Database directory and file
 DATA_DIR = BASE_DIR / "data"
 DATABASE_PATH = DATA_DIR / "pos.db"
 
+DATABASE_TIMEOUT = 10
+
 
 class Database:
+    """
+    Centralized SQLite database manager.
 
-
-
-    def debug_connection(self):
-
-        connection = self.connect()
-        try:
-            print("\n========== DATABASE DEBUG ==========")
-
-            print("Expected database path:")
-            print(DATABASE_PATH.resolve())
-
-            print("\nActual connected database:")
-            for row in connection.execute(
-                "PRAGMA database_list"
-            ).fetchall():
-                print(dict(row))
-
-            print("\nUsers:")
-            for row in connection.execute(
-                "SELECT user_id, username FROM users"
-            ).fetchall():
-                print(dict(row))
-
-            print("\nUser roles:")
-            for row in connection.execute("""
-                SELECT
-                    u.username,
-                    r.role_name
-                FROM user_roles ur
-                JOIN users u ON u.user_id = ur.user_id
-                JOIN roles r ON r.role_id = ur.role_id
-                WHERE u.user_id = 2
-            """).fetchall():
-                print(dict(row))
-
-            print("====================================\n")
-
-        finally:
-            connection.close()
-
+    Responsibilities:
+        - Database connection management
+        - Foreign key enforcement
+        - WAL journal mode
+        - Connection timeout
+        - Database schema initialization
+        - Database debugging
+    """
 
     def __init__(self):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-   
-    def connect(self):
-
-        connection = sqlite3.connect(
-        DATABASE_PATH,
-        timeout=10
+        DATA_DIR.mkdir(
+            parents=True,
+            exist_ok=True
         )
 
-    # Enable foreign key constraints
-        connection.execute("PRAGMA foreign_keys = ON")
+    # ==================================================
+    # CONNECTION MANAGEMENT
+    # ==================================================
 
-    # Wait up to 10 seconds for database locks
-        connection.execute("PRAGMA busy_timeout = 10000")
+    def connect(self) -> sqlite3.Connection:
+        """
+        Create and configure a SQLite connection.
+        """
 
-    # Enable dictionary-like row access
+        connection = sqlite3.connect(
+            str(DATABASE_PATH),
+            timeout=DATABASE_TIMEOUT
+        )
+
+        # Dictionary-like row access
         connection.row_factory = sqlite3.Row
+
+        # Enable foreign key constraints
+        connection.execute(
+            "PRAGMA foreign_keys = ON"
+        )
+
+        # Wait when the database is temporarily locked
+        connection.execute(
+            "PRAGMA busy_timeout = 10000"
+        )
+
+        # Balanced performance and durability in WAL mode
+        connection.execute(
+            "PRAGMA synchronous = NORMAL"
+        )
 
         return connection
 
+    # ==================================================
+    # DATABASE INITIALIZATION
+    # ==================================================
 
     def initialize(self):
+        """
+        Initialize database tables and indexes.
+        """
 
-        with self.connect() as connection:
+        with closing(self.connect()) as connection:
 
-            connection.executescript("""
+            # Enable WAL mode
+            connection.execute(
+                "PRAGMA journal_mode = WAL"
+            )
 
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL UNIQUE,
-                    password_hash TEXT NOT NULL,
-                    full_name TEXT NOT NULL,
-                    is_active INTEGER NOT NULL DEFAULT 1
-                        CHECK (is_active IN (0, 1)),
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
+            with connection:
 
-                CREATE TABLE IF NOT EXISTS roles (
-                    role_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    role_name TEXT NOT NULL UNIQUE,
-                    description TEXT
-                );
+                connection.executescript("""
 
-                CREATE TABLE IF NOT EXISTS permissions (
-                    permission_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    permission_code TEXT NOT NULL UNIQUE,
-                    description TEXT
-                );
+                    -- ==================================
+                    -- USERS
+                    -- ==================================
 
-                CREATE TABLE IF NOT EXISTS user_roles (
-                    user_id INTEGER NOT NULL,
-                    role_id INTEGER NOT NULL,
+                    CREATE TABLE IF NOT EXISTS users (
 
-                    PRIMARY KEY (user_id, role_id),
+                        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-                    FOREIGN KEY (user_id)
-                        REFERENCES users(user_id)
-                        ON DELETE CASCADE,
+                        username TEXT NOT NULL UNIQUE,
 
-                    FOREIGN KEY (role_id)
-                        REFERENCES roles(role_id)
-                        ON DELETE CASCADE
-                );
+                        password_hash TEXT NOT NULL,
 
-                CREATE TABLE IF NOT EXISTS role_permissions (
-                    role_id INTEGER NOT NULL,
-                    permission_id INTEGER NOT NULL,
+                        full_name TEXT NOT NULL,
 
-                    PRIMARY KEY (role_id, permission_id),
+                        is_active INTEGER NOT NULL DEFAULT 1
+                            CHECK (is_active IN (0, 1)),
 
-                    FOREIGN KEY (role_id)
-                        REFERENCES roles(role_id)
-                        ON DELETE CASCADE,
+                        created_at TEXT NOT NULL
+                            DEFAULT CURRENT_TIMESTAMP
+                    );
 
-                    FOREIGN KEY (permission_id)
-                        REFERENCES permissions(permission_id)
-                        ON DELETE CASCADE
-                );
 
-            """)
+                    -- ==================================
+                    -- ROLES
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS roles (
+
+                        role_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        role_name TEXT NOT NULL UNIQUE,
+
+                        description TEXT
+                    );
+
+
+                    -- ==================================
+                    -- PERMISSIONS
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS permissions (
+
+                        permission_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        permission_code TEXT NOT NULL UNIQUE,
+
+                        description TEXT
+                    );
+
+
+                    -- ==================================
+                    -- USER ROLES
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS user_roles (
+
+                        user_id INTEGER NOT NULL,
+
+                        role_id INTEGER NOT NULL,
+
+                        PRIMARY KEY (user_id, role_id),
+
+                        FOREIGN KEY (user_id)
+                            REFERENCES users(user_id)
+                            ON DELETE CASCADE,
+
+                        FOREIGN KEY (role_id)
+                            REFERENCES roles(role_id)
+                            ON DELETE CASCADE
+                    );
+
+
+                    -- ==================================
+                    -- ROLE PERMISSIONS
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS role_permissions (
+
+                        role_id INTEGER NOT NULL,
+
+                        permission_id INTEGER NOT NULL,
+
+                        PRIMARY KEY (role_id, permission_id),
+
+                        FOREIGN KEY (role_id)
+                            REFERENCES roles(role_id)
+                            ON DELETE CASCADE,
+
+                        FOREIGN KEY (permission_id)
+                            REFERENCES permissions(permission_id)
+                            ON DELETE CASCADE
+                    );
+
+
+                    -- ==================================
+                    -- INDEXES
+                    -- ==================================
+
+                    CREATE INDEX IF NOT EXISTS idx_user_roles_role
+                    ON user_roles(role_id);
+
+
+                    CREATE INDEX IF NOT EXISTS idx_role_permissions_permission
+                    ON role_permissions(permission_id);
+
+                    -- ==================================
+                    -- CATEGORIES
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS categories (
+
+                        category_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        category_name TEXT NOT NULL COLLATE NOCASE UNIQUE
+                            CHECK (length(trim(category_name)) > 0),
+
+                        description TEXT,
+
+                        is_active INTEGER NOT NULL DEFAULT 1
+                            CHECK (is_active IN (0, 1)),
+
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+
+
+                    -- ==================================
+                    -- PRODUCTS
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS products (
+
+                        product_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        product_name TEXT NOT NULL
+                            CHECK (length(trim(product_name)) > 0),
+
+                        description TEXT,
+
+                        category_id INTEGER NOT NULL,
+
+                        brand TEXT,
+
+                        is_active INTEGER NOT NULL DEFAULT 1
+                            CHECK (is_active IN (0, 1)),
+
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (category_id)
+                            REFERENCES categories(category_id)
+                            ON DELETE RESTRICT
+                    );
+
+
+                    -- ==================================
+                    -- COLORS
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS colors (
+
+                        color_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        color_name TEXT NOT NULL COLLATE NOCASE UNIQUE
+                            CHECK (length(trim(color_name)) > 0),
+
+                        hex_code TEXT,
+
+                        is_active INTEGER NOT NULL DEFAULT 1
+                            CHECK (is_active IN (0, 1))
+                    );
+
+
+                    -- ==================================
+                    -- SIZES
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS sizes (
+
+                        size_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        size_name TEXT NOT NULL COLLATE NOCASE UNIQUE
+                            CHECK (length(trim(size_name)) > 0),
+
+                        sort_order INTEGER NOT NULL DEFAULT 0,
+
+                        is_active INTEGER NOT NULL DEFAULT 1
+                            CHECK (is_active IN (0, 1))
+                    );
+
+
+                    -- ==================================
+                    -- PRODUCT VARIANTS
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS product_variants (
+
+                        variant_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        product_id INTEGER NOT NULL,
+
+                        sku TEXT COLLATE NOCASE UNIQUE,
+
+                        barcode TEXT COLLATE NOCASE UNIQUE,
+
+                        color_id INTEGER,
+
+                        size_id INTEGER,
+
+                        cost_price REAL NOT NULL DEFAULT 0
+                            CHECK (cost_price >= 0),
+
+                        selling_price REAL NOT NULL DEFAULT 0
+                            CHECK (selling_price >= 0),
+
+                        is_active INTEGER NOT NULL DEFAULT 1
+                            CHECK (is_active IN (0, 1)),
+
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (product_id)
+                            REFERENCES products(product_id)
+                            ON DELETE CASCADE,
+
+                        FOREIGN KEY (color_id)
+                            REFERENCES colors(color_id)
+                            ON DELETE RESTRICT,
+
+                        FOREIGN KEY (size_id)
+                            REFERENCES sizes(size_id)
+                            ON DELETE RESTRICT,
+
+                        UNIQUE (product_id, color_id, size_id)
+                    );
+
+
+                    -- ==================================
+                    -- INDEXES
+                    -- ==================================
+
+                    CREATE INDEX IF NOT EXISTS idx_products_category
+                    ON products(category_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_products_name
+                    ON products(product_name);
+
+                    CREATE INDEX IF NOT EXISTS idx_products_active
+                    ON products(is_active);
+
+                    CREATE INDEX IF NOT EXISTS idx_variants_product
+                    ON product_variants(product_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_variants_sku
+                    ON product_variants(sku);
+
+                    CREATE INDEX IF NOT EXISTS idx_variants_barcode
+                    ON product_variants(barcode);
+
+                """)
 
         print("Database initialized successfully!")
+        print(f"Database location: {DATABASE_PATH.resolve()}")
 
+    # ==================================================
+    # DATABASE DEBUGGING
+    # ==================================================
+
+    def debug_connection(
+        self,
+        user_id: int | None = None
+    ):
+        """
+        Display database information.
+
+        Optionally inspect a specific user's roles.
+        """
+
+        with closing(self.connect()) as connection:
+
+            print("\n========== DATABASE DEBUG ==========")
+
+            # Database location
+            print("\nDatabase location:")
+
+            for row in connection.execute(
+                "PRAGMA database_list"
+            ).fetchall():
+
+                print(dict(row))
+
+            # Foreign key status
+            print("\nForeign keys:")
+
+            print(
+                connection.execute(
+                    "PRAGMA foreign_keys"
+                ).fetchone()[0]
+            )
+
+            # Journal mode
+            print("\nJournal mode:")
+
+            print(
+                connection.execute(
+                    "PRAGMA journal_mode"
+                ).fetchone()[0]
+            )
+
+            # Users
+            print("\nUsers:")
+
+            users = connection.execute("""
+                SELECT
+                    user_id,
+                    username,
+                    full_name,
+                    is_active
+                FROM users
+                ORDER BY user_id
+            """).fetchall()
+
+            for row in users:
+                print(dict(row))
+
+            # Optional user role inspection
+            if user_id is not None:
+
+                print(f"\nRoles for user ID {user_id}:")
+
+                roles = connection.execute("""
+                    SELECT
+                        u.username,
+                        r.role_id,
+                        r.role_name
+
+                    FROM user_roles ur
+
+                    INNER JOIN users u
+                        ON ur.user_id = u.user_id
+
+                    INNER JOIN roles r
+                        ON ur.role_id = r.role_id
+
+                    WHERE ur.user_id = ?
+
+                """, (user_id,)).fetchall()
+
+                for row in roles:
+                    print(dict(row))
+
+                print(f"\nPermissions for user ID {user_id}:")
+
+                permissions = connection.execute("""
+                    SELECT DISTINCT
+                        p.permission_code
+
+                    FROM user_roles ur
+
+                    INNER JOIN role_permissions rp
+                        ON ur.role_id = rp.role_id
+
+                    INNER JOIN permissions p
+                        ON rp.permission_id = p.permission_id
+
+                    WHERE ur.user_id = ?
+
+                    ORDER BY p.permission_code
+
+                """, (user_id,)).fetchall()
+
+                for row in permissions:
+                    print(dict(row))
+
+                print(
+                    f"Total permissions: {len(permissions)}"
+                )
+
+            print("\n====================================\n")
+
+
+# ==================================================
+# DIRECT EXECUTION
+# ==================================================
 
 if __name__ == "__main__":
 
     database = Database()
+
     database.initialize()
+
+    database.debug_connection()

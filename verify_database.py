@@ -32,7 +32,12 @@ def verify_database():
             "roles",
             "permissions",
             "user_roles",
-            "role_permissions"
+            "role_permissions",
+            "categories",
+            "products",
+            "colors",
+            "sizes",
+            "product_variants"
         }
 
         actual_tables = {table["name"] for table in tables}

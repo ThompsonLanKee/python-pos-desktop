@@ -1,4 +1,11 @@
-from src.models import User, Role, Permission
+from src.models import (
+    User,
+    Role,
+    Permission,
+    Category,
+    Product,
+    ProductVariant
+)
 
 
 def test_user():
@@ -52,10 +59,48 @@ def test_permission():
     print("Permission model: PASSED")
 
 
+def test_category():
+
+    category = Category(
+        category_id=1,
+        category_name="  Beverages  "
+    )
+
+    assert category.category_name == "Beverages"
+
+    category.deactivate()
+    assert category.is_active is False
+
+    print("Category model: PASSED")
+
+
+def test_product_and_variant():
+
+    product = Product(
+        product_id=1,
+        product_name="  T-Shirt  ",
+        category_id=1
+    )
+    variant = ProductVariant(
+        variant_id=1,
+        product_id=1,
+        sku="  TSHIRT-BLACK-M  ",
+        cost_price=100,
+        selling_price=150
+    )
+
+    assert product.product_name == "T-Shirt"
+    assert variant.sku == "TSHIRT-BLACK-M"
+
+    print("Product and variant models: PASSED")
+
+
 if __name__ == "__main__":
 
     test_user()
     test_role()
     test_permission()
+    test_category()
+    test_product_and_variant()
 
     print("\nAll model tests passed!")

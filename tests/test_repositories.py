@@ -1,12 +1,21 @@
 
 from src.core.database import Database
 
-from src.models import User, Role, Permission
+from src.models import (
+    User,
+    Role,
+    Permission,
+    Category,
+    Product,
+    ProductVariant
+)
 
 from src.repositories import (
     UserRepository,
     RoleRepository,
-    PermissionRepository
+    PermissionRepository,
+    CategoryRepository,
+    ProductRepository
 )
 
 
@@ -94,6 +103,61 @@ def test_repositories():
     )
 
     print("PermissionRepository: PASSED")
+
+    # 4. Create category and product
+    category_repo = CategoryRepository(database)
+    product_repo = ProductRepository(database)
+
+    category = category_repo.get_by_name("Test Beverages")
+
+    if category is None:
+        category_id = category_repo.create(
+            Category(
+                category_name="Test Beverages",
+                description="Test category"
+            )
+        )
+        category = category_repo.get_by_id(category_id)
+
+    assert category is not None
+
+    products = product_repo.get_all(category.category_id)
+    product = products[0] if products else None
+
+    if product is None:
+        product_id = product_repo.create(
+            Product(
+                product_name="Test T-Shirt",
+                category_id=category.category_id,
+                brand="Test Brand"
+            )
+        )
+        product = product_repo.get_by_id(product_id)
+
+    assert product is not None
+    assert product.category_id == category.category_id
+
+    print("CategoryRepository and ProductRepository: PASSED")
+
+    # 5. Create a product variant
+    variant = product_repo.get_variant_by_sku("TEST-TSHIRT-M")
+
+    if variant is None:
+        variant_id = product_repo.create_variant(
+            ProductVariant(
+                product_id=product.product_id,
+                sku="TEST-TSHIRT-M",
+                cost_price=100,
+                selling_price=150
+            )
+        )
+        variant = product_repo.get_variant_by_id(variant_id)
+
+    assert variant is not None
+    assert variant.product_id == product.product_id
+    assert variant.selling_price == 150
+
+    print("ProductVariant repository operations: PASSED")
 
 
 if __name__ == "__main__":
