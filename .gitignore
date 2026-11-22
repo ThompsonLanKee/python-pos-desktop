@@ -24,3 +24,12 @@ htmlcov/
 build/
 dist/
 *.spec
+
+
+# SQLite database
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Keep data directory
+!data/.gitkeep
