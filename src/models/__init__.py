@@ -7,6 +7,7 @@ from .product import Product
 from .color import Color
 from .size import Size
 from .product_variant import ProductVariant
+from .inventory_transaction import InventoryTransaction
 
 __all__ = [
     "User",
@@ -16,5 +17,6 @@ __all__ = [
     "Product",
     "Color",
     "Size",
-    "ProductVariant"
+    "ProductVariant",
+    "InventoryTransaction"
 ]

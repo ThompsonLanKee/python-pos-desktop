@@ -37,7 +37,9 @@ def verify_database():
             "products",
             "colors",
             "sizes",
-            "product_variants"
+            "product_variants",
+            "inventory",
+            "inventory_transactions"
         }
 
         actual_tables = {table["name"] for table in tables}

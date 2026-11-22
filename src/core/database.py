@@ -360,6 +360,50 @@ class Database:
                             ON DELETE CASCADE
                     );
 
+                    -- ==================================
+                    -- INVENTORY TRANSACTION HISTORY
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS inventory_transactions (
+
+                        transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        variant_id INTEGER NOT NULL,
+
+                        transaction_type TEXT NOT NULL
+                            CHECK (
+                                transaction_type IN (
+                                    'OPENING',
+                                    'PURCHASE',
+                                    'SALE',
+                                    'SALE_RETURN',
+                                    'PURCHASE_RETURN',
+                                    'ADJUSTMENT_IN',
+                                    'ADJUSTMENT_OUT',
+                                    'DAMAGE'
+                                )
+                            ),
+
+                        quantity_change INTEGER NOT NULL
+                            CHECK (quantity_change != 0),
+
+                        quantity_after INTEGER NOT NULL
+                            CHECK (quantity_after >= 0),
+
+                        reference_type TEXT,
+
+                        reference_id INTEGER,
+
+                        notes TEXT,
+
+                        created_at TEXT NOT NULL
+                            DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (variant_id)
+                            REFERENCES product_variants(variant_id)
+                            ON DELETE RESTRICT
+                    );
+
 
                     -- ==================================
                     -- INDEXES
@@ -382,6 +426,15 @@ class Database:
 
                     CREATE INDEX IF NOT EXISTS idx_variants_barcode
                     ON product_variants(barcode);
+
+                    CREATE INDEX IF NOT EXISTS idx_inventory_transactions_variant
+                    ON inventory_transactions(variant_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_inventory_transactions_created_at
+                    ON inventory_transactions(created_at);
+
+                    CREATE INDEX IF NOT EXISTS idx_inventory_transactions_type
+                    ON inventory_transactions(transaction_type);
 
                 """)
 

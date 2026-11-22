@@ -160,26 +160,36 @@ class InventoryRepository(BaseRepository):
     def adjust_quantity(
         self,
         variant_id: int,
-        quantity_change: int
+        quantity_change: int,
+        connection: Optional[sqlite3.Connection] = None
     ) -> bool:
         """
-        Increase or decrease stock atomically.
+        Adjust stock atomically.
 
-        A negative adjustment cannot make stock negative.
+        Uses an existing transaction when a connection is supplied.
+        Prevents the balance from becoming negative.
         """
+
+        if (
+            not isinstance(quantity_change, int)
+            or isinstance(quantity_change, bool)
+        ):
+            raise TypeError("Stock adjustment must be an integer.")
+
+        if quantity_change == 0:
+            raise ValueError("Stock adjustment cannot be zero.")
 
         query = """
             UPDATE inventory
             SET quantity_on_hand = quantity_on_hand + ?,
                 updated_at = CURRENT_TIMESTAMP
-
             WHERE variant_id = ?
               AND quantity_on_hand + ? >= 0
         """
 
-        with self.connection() as connection:
+        with self.connection_scope(connection) as db_connection:
 
-            cursor = connection.execute(
+            cursor = db_connection.execute(
                 query,
                 (
                     quantity_change,
