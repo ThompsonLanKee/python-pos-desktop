@@ -1,4 +1,5 @@
 
+import sqlite3
 from typing import Optional
 
 from src.models import Product
@@ -14,7 +15,11 @@ class ProductRepository(BaseRepository):
     # CREATE
     # ==========================================
 
-    def create(self, product: Product) -> int:
+    def create(
+        self,
+        product: Product,
+        connection: Optional[sqlite3.Connection] = None
+    ) -> int:
         """Create a new product."""
 
         query = """
@@ -28,9 +33,9 @@ class ProductRepository(BaseRepository):
             VALUES (?, ?, ?, ?, ?)
         """
 
-        with self.connection() as connection:
+        with self.connection_scope(connection) as db_connection:
 
-            cursor = connection.execute(
+            cursor = db_connection.execute(
                 query,
                 (
                     product.product_name,
@@ -162,7 +167,11 @@ class ProductRepository(BaseRepository):
     # UPDATE
     # ==========================================
 
-    def update(self, product: Product) -> bool:
+    def update(
+        self,
+        product: Product,
+        connection: Optional[sqlite3.Connection] = None
+    ) -> bool:
         """Update product information."""
 
         if product.product_id is None:
@@ -178,9 +187,9 @@ class ProductRepository(BaseRepository):
             WHERE product_id = ?
         """
 
-        with self.connection() as connection:
+        with self.connection_scope(connection) as db_connection:
 
-            cursor = connection.execute(
+            cursor = db_connection.execute(
                 query,
                 (
                     product.product_name,
@@ -200,7 +209,8 @@ class ProductRepository(BaseRepository):
     def set_active(
         self,
         product_id: int,
-        is_active: bool
+        is_active: bool,
+        connection: Optional[sqlite3.Connection] = None
     ) -> bool:
         """Activate or deactivate a product."""
 
@@ -211,9 +221,9 @@ class ProductRepository(BaseRepository):
             WHERE product_id = ?
         """
 
-        with self.connection() as connection:
+        with self.connection_scope(connection) as db_connection:
 
-            cursor = connection.execute(
+            cursor = db_connection.execute(
                 query,
                 (int(is_active), product_id)
             )

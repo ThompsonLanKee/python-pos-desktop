@@ -1,6 +1,6 @@
 
 from uuid import uuid4
-
+from contextlib import contextmanager
 from src.core.database import Database
 
 from src.models import (
@@ -24,6 +24,7 @@ from src.repositories import (
 def test_variant_repositories():
 
     database = Database()
+    database.initialize()
 
     category_repo = CategoryRepository(database)
     product_repo = ProductRepository(database)

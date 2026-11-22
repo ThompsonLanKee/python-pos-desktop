@@ -1,4 +1,4 @@
-
+import sqlite3
 from typing import Optional
 
 from src.models import ProductVariant
@@ -12,7 +12,12 @@ class ProductVariantRepository(BaseRepository):
     # CREATE
     # ==========================================
 
-    def create(self, variant: ProductVariant) -> int:
+    def create(
+        self,
+        variant: ProductVariant,
+        connection: Optional[sqlite3.Connection] = None
+    ) -> int:
+        """Create a new product variant."""
 
         query = """
             INSERT INTO product_variants (
@@ -28,9 +33,9 @@ class ProductVariantRepository(BaseRepository):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """
 
-        with self.connection() as connection:
+        with self.connection_scope(connection) as db_connection:
 
-            cursor = connection.execute(
+            cursor = db_connection.execute(
                 query,
                 (
                     variant.product_id,
@@ -45,6 +50,7 @@ class ProductVariantRepository(BaseRepository):
             )
 
             return cursor.lastrowid
+
 
     # ==========================================
     # RETRIEVE

@@ -1,7 +1,7 @@
 
 import sqlite3
 
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 
@@ -209,12 +209,18 @@ class Database:
 
                         description TEXT,
 
+                        parent_category_id INTEGER,
+
                         is_active INTEGER NOT NULL DEFAULT 1
                             CHECK (is_active IN (0, 1)),
 
                         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (parent_category_id)
+                            REFERENCES categories(category_id)
+                            ON DELETE SET NULL
                     );
 
 
@@ -332,6 +338,30 @@ class Database:
 
 
                     -- ==================================
+                    -- INVENTORY
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS inventory (
+
+                        inventory_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        variant_id INTEGER NOT NULL UNIQUE,
+
+                        quantity_on_hand INTEGER NOT NULL DEFAULT 0
+                            CHECK (quantity_on_hand >= 0),
+
+                        reorder_level INTEGER NOT NULL DEFAULT 0
+                            CHECK (reorder_level >= 0),
+
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (variant_id)
+                            REFERENCES product_variants(variant_id)
+                            ON DELETE CASCADE
+                    );
+
+
+                    -- ==================================
                     -- INDEXES
                     -- ==================================
 
@@ -355,8 +385,49 @@ class Database:
 
                 """)
 
+                category_columns = {
+                    row["name"]
+                    for row in connection.execute(
+                        "PRAGMA table_info(categories)"
+                    ).fetchall()
+                }
+
+                if "parent_category_id" not in category_columns:
+                    connection.execute("""
+                        ALTER TABLE categories
+                        ADD COLUMN parent_category_id INTEGER
+                            REFERENCES categories(category_id)
+                            ON DELETE SET NULL
+                    """)
+
         print("Database initialized successfully!")
         print(f"Database location: {DATABASE_PATH.resolve()}")
+
+    # ==================================================
+    # TRANSACTION MANAGEMENT
+    # ==================================================
+
+    @contextmanager
+    def transaction(self):
+        """
+        Provide one shared SQLite transaction.
+
+        All database operations using the yielded connection
+        belong to the same transaction.
+        """
+        connection = self.connect()
+
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            yield connection
+            connection.commit()
+
+        except Exception:
+            connection.rollback()
+            raise
+
+        finally:
+            connection.close()
 
     # ==================================================
     # DATABASE DEBUGGING

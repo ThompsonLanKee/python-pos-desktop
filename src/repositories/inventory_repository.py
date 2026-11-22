@@ -1,4 +1,5 @@
 
+import sqlite3
 from typing import Optional
 
 from src.repositories.base_repository import BaseRepository
@@ -15,7 +16,11 @@ class InventoryRepository(BaseRepository):
     # INITIALIZE INVENTORY
     # ==========================================
 
-    def create(self, variant_id: int) -> int:
+    def create(
+        self,
+        variant_id: int,
+        connection: Optional[sqlite3.Connection] = None
+    ) -> int:
         """Create an inventory record for a variant."""
 
         query = """
@@ -27,9 +32,9 @@ class InventoryRepository(BaseRepository):
             VALUES (?, 0, 0)
         """
 
-        with self.connection() as connection:
+        with self.connection_scope(connection) as db_connection:
 
-            cursor = connection.execute(
+            cursor = db_connection.execute(
                 query,
                 (variant_id,)
             )
@@ -44,6 +49,7 @@ class InventoryRepository(BaseRepository):
         self,
         variant_id: int
     ) -> Optional[dict]:
+        """Retrieve inventory by variant ID."""
 
         query = """
             SELECT *
@@ -60,6 +66,7 @@ class InventoryRepository(BaseRepository):
             return dict(row) if row else None
 
     def get_all(self) -> list[dict]:
+        """Retrieve all inventory records."""
 
         query = """
             SELECT
@@ -88,6 +95,7 @@ class InventoryRepository(BaseRepository):
             ]
 
     def get_low_stock(self) -> list[dict]:
+        """Retrieve inventory at or below reorder level."""
 
         query = """
             SELECT
@@ -187,6 +195,7 @@ class InventoryRepository(BaseRepository):
         variant_id: int,
         reorder_level: int
     ) -> bool:
+        """Update the minimum stock alert level."""
 
         if reorder_level < 0:
             raise ValueError(
