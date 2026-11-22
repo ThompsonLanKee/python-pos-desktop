@@ -1,0 +1,210 @@
+
+from typing import Optional
+
+from src.repositories.base_repository import BaseRepository
+
+
+class InventoryRepository(BaseRepository):
+    """
+    Handles inventory balance operations.
+
+    Each product variant has one inventory record.
+    """
+
+    # ==========================================
+    # INITIALIZE INVENTORY
+    # ==========================================
+
+    def create(self, variant_id: int) -> int:
+        """Create an inventory record for a variant."""
+
+        query = """
+            INSERT INTO inventory (
+                variant_id,
+                quantity_on_hand,
+                reorder_level
+            )
+            VALUES (?, 0, 0)
+        """
+
+        with self.connection() as connection:
+
+            cursor = connection.execute(
+                query,
+                (variant_id,)
+            )
+
+            return cursor.lastrowid
+
+    # ==========================================
+    # RETRIEVE
+    # ==========================================
+
+    def get_by_variant(
+        self,
+        variant_id: int
+    ) -> Optional[dict]:
+
+        query = """
+            SELECT *
+            FROM inventory
+            WHERE variant_id = ?
+        """
+
+        with self.connection() as connection:
+
+            row = connection.execute(
+                query, (variant_id,)
+            ).fetchone()
+
+            return dict(row) if row else None
+
+    def get_all(self) -> list[dict]:
+
+        query = """
+            SELECT
+                i.*,
+                pv.sku,
+                p.product_name
+
+            FROM inventory i
+
+            INNER JOIN product_variants pv
+                ON i.variant_id = pv.variant_id
+
+            INNER JOIN products p
+                ON pv.product_id = p.product_id
+
+            ORDER BY p.product_name, pv.sku
+        """
+
+        with self.connection() as connection:
+
+            rows = connection.execute(query).fetchall()
+
+            return [
+                dict(row)
+                for row in rows
+            ]
+
+    def get_low_stock(self) -> list[dict]:
+
+        query = """
+            SELECT
+                i.*,
+                pv.sku,
+                p.product_name
+
+            FROM inventory i
+
+            INNER JOIN product_variants pv
+                ON i.variant_id = pv.variant_id
+
+            INNER JOIN products p
+                ON pv.product_id = p.product_id
+
+            WHERE i.quantity_on_hand <= i.reorder_level
+
+            ORDER BY i.quantity_on_hand
+        """
+
+        with self.connection() as connection:
+
+            rows = connection.execute(query).fetchall()
+
+            return [
+                dict(row)
+                for row in rows
+            ]
+
+    # ==========================================
+    # UPDATE
+    # ==========================================
+
+    def update_quantity(
+        self,
+        variant_id: int,
+        quantity: int
+    ) -> bool:
+        """Set the current stock quantity."""
+
+        if quantity < 0:
+            raise ValueError(
+                "Stock quantity cannot be negative."
+            )
+
+        query = """
+            UPDATE inventory
+            SET quantity_on_hand = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE variant_id = ?
+        """
+
+        with self.connection() as connection:
+
+            cursor = connection.execute(
+                query,
+                (quantity, variant_id)
+            )
+
+            return cursor.rowcount > 0
+
+    def adjust_quantity(
+        self,
+        variant_id: int,
+        quantity_change: int
+    ) -> bool:
+        """
+        Increase or decrease stock atomically.
+
+        A negative adjustment cannot make stock negative.
+        """
+
+        query = """
+            UPDATE inventory
+            SET quantity_on_hand = quantity_on_hand + ?,
+                updated_at = CURRENT_TIMESTAMP
+
+            WHERE variant_id = ?
+              AND quantity_on_hand + ? >= 0
+        """
+
+        with self.connection() as connection:
+
+            cursor = connection.execute(
+                query,
+                (
+                    quantity_change,
+                    variant_id,
+                    quantity_change
+                )
+            )
+
+            return cursor.rowcount > 0
+
+    def update_reorder_level(
+        self,
+        variant_id: int,
+        reorder_level: int
+    ) -> bool:
+
+        if reorder_level < 0:
+            raise ValueError(
+                "Reorder level cannot be negative."
+            )
+
+        query = """
+            UPDATE inventory
+            SET reorder_level = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE variant_id = ?
+        """
+
+        with self.connection() as connection:
+
+            cursor = connection.execute(
+                query,
+                (reorder_level, variant_id)
+            )
+
+            return cursor.rowcount > 0
