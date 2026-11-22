@@ -14,20 +14,69 @@ DATABASE_PATH = DATA_DIR / "pos.db"
 
 class Database:
 
+
+
+    def debug_connection(self):
+
+        connection = self.connect()
+        try:
+            print("\n========== DATABASE DEBUG ==========")
+
+            print("Expected database path:")
+            print(DATABASE_PATH.resolve())
+
+            print("\nActual connected database:")
+            for row in connection.execute(
+                "PRAGMA database_list"
+            ).fetchall():
+                print(dict(row))
+
+            print("\nUsers:")
+            for row in connection.execute(
+                "SELECT user_id, username FROM users"
+            ).fetchall():
+                print(dict(row))
+
+            print("\nUser roles:")
+            for row in connection.execute("""
+                SELECT
+                    u.username,
+                    r.role_name
+                FROM user_roles ur
+                JOIN users u ON u.user_id = ur.user_id
+                JOIN roles r ON r.role_id = ur.role_id
+                WHERE u.user_id = 2
+            """).fetchall():
+                print(dict(row))
+
+            print("====================================\n")
+
+        finally:
+            connection.close()
+
+
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+   
     def connect(self):
 
-        connection = sqlite3.connect(DATABASE_PATH)
+        connection = sqlite3.connect(
+        DATABASE_PATH,
+        timeout=10
+        )
 
-        # Enable foreign key constraints
+    # Enable foreign key constraints
         connection.execute("PRAGMA foreign_keys = ON")
 
-        # Return rows as dictionary-like objects
+    # Wait up to 10 seconds for database locks
+        connection.execute("PRAGMA busy_timeout = 10000")
+
+    # Enable dictionary-like row access
         connection.row_factory = sqlite3.Row
 
         return connection
+
 
     def initialize(self):
 

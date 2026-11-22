@@ -11,12 +11,11 @@ class AuthorizationService:
         self,
         permission_repository: PermissionRepository
     ):
-
         self.permission_repository = permission_repository
 
     def get_user_permissions(self, user_id: int) -> set[str]:
         """
-        Retrieve all permission codes assigned to a user.
+        Retrieve all normalized permission codes assigned to a user.
         """
 
         permissions = (
@@ -24,8 +23,9 @@ class AuthorizationService:
         )
 
         return {
-            permission.permission_code
+            permission.permission_code.strip().upper()
             for permission in permissions
+            if permission.permission_code
         }
 
     def has_permission(
@@ -37,9 +37,12 @@ class AuthorizationService:
         Check whether a user has a specific permission.
         """
 
+        if not permission_code:
+            return False
+
         permissions = self.get_user_permissions(user_id)
 
-        return permission_code.upper() in permissions
+        return permission_code.strip().upper() in permissions
 
     def has_any_permission(
         self,
@@ -52,10 +55,13 @@ class AuthorizationService:
 
         permissions = self.get_user_permissions(user_id)
 
-        return any(
-            code.upper() in permissions
+        required_permissions = {
+            code.strip().upper()
             for code in permission_codes
-        )
+            if code
+        }
+
+        return bool(permissions.intersection(required_permissions))
 
     def require_permission(
         self,
@@ -67,7 +73,6 @@ class AuthorizationService:
         """
 
         if not self.has_permission(user_id, permission_code):
-
             raise PermissionError(
                 f"Access denied: {permission_code}"
             )

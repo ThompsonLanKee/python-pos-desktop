@@ -78,7 +78,7 @@ class RoleRepository(BaseRepository):
     def assign_to_user(self, user_id: int, role_id: int) -> None:
 
         query = """
-            INSERT INTO user_roles (user_id, role_id)
+            INSERT OR IGNORE INTO user_roles (user_id, role_id)
             VALUES (?, ?)
         """
 
