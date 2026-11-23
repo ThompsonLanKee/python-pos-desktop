@@ -106,6 +106,37 @@ class PermissionRepository(BaseRepository):
     # ROLE-PERMISSION MANAGEMENT
     # ==========================================
 
+    def set_role_permissions(
+        self,
+        role_id: int,
+        permission_ids: list[int],
+        connection=None
+    ) -> None:
+        """Replace all permissions assigned to a role."""
+
+        with self.connection_scope(connection) as conn:
+
+            conn.execute(
+                """
+                DELETE FROM role_permissions
+                WHERE role_id = ?
+                """,
+                (role_id,)
+            )
+
+            for permission_id in set(permission_ids):
+
+                conn.execute(
+                    """
+                    INSERT INTO role_permissions (
+                        role_id,
+                        permission_id
+                    )
+                    VALUES (?, ?)
+                    """,
+                    (role_id, permission_id)
+                )
+
     def assign_to_role(
         self,
         role_id: int,

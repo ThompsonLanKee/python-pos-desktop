@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.views.sale_view import SaleView
-
+from src.views.user_management_view import UserManagementView
+from src.views.role_management_view import RoleManagementView
 
 class MainWindow(QMainWindow):
     """
@@ -112,7 +113,9 @@ class MainWindow(QMainWindow):
         session,
         session_manager,
         authorization_service,
-        sale_service
+        sale_service,
+        user_management_service,
+        role_management_service
     ):
         super().__init__()
 
@@ -120,6 +123,8 @@ class MainWindow(QMainWindow):
         self.session_manager = session_manager
         self.authorization_service = authorization_service
         self.sale_service = sale_service
+        self.user_management_service = user_management_service
+        self.role_management_service = role_management_service
 
         # Retrieve current user's permissions
         self.permissions = (
@@ -375,15 +380,23 @@ class MainWindow(QMainWindow):
             return SaleView(
                 sale_service=self.sale_service
             )
+            
+        if page_key == "users":
+            return UserManagementView(
+                user_management_service=self.user_management_service,
+                current_user_id=self.session.user_id
+            )
+            
+        if page_key == "roles":
+            return RoleManagementView(
+                role_management_service=self.role_management_service
+            )
 
+        # Generic placeholder for modules not implemented yet
         page = QWidget()
 
         layout = QVBoxLayout(page)
-
-        layout.setContentsMargins(
-            0, 10, 0, 0
-        )
-
+        layout.setContentsMargins(0, 10, 0, 0)
         layout.setSpacing(16)
 
         heading = QLabel(title)
@@ -400,10 +413,10 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(heading)
         layout.addWidget(description)
-
         layout.addStretch()
 
         return page
+
 
     # --------------------------------------------------
     # DASHBOARD PAGE

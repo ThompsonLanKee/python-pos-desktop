@@ -7,24 +7,42 @@ from src.repositories.base_repository import BaseRepository
 
 class RoleRepository(BaseRepository):
 
-    def create(self, role: Role) -> int:
+    def create(self, role: Role, connection=None) -> int:
 
         query = """
-            INSERT INTO roles (
-                role_name,
-                description
-            )
+            INSERT INTO roles (role_name, description)
             VALUES (?, ?)
         """
 
-        with self.connection() as connection:
-
-            cursor = connection.execute(
+        with self.connection_scope(connection) as conn:
+            cursor = conn.execute(
                 query,
                 (role.role_name, role.description)
             )
-
             return cursor.lastrowid
+
+    def update(self, role: Role, connection=None) -> bool:
+
+        if role.role_id is None:
+            raise ValueError("Role ID is required.")
+
+        query = """
+            UPDATE roles
+            SET role_name = ?,
+                description = ?
+            WHERE role_id = ?
+        """
+
+        with self.connection_scope(connection) as conn:
+            cursor = conn.execute(
+                query,
+                (
+                    role.role_name,
+                    role.description,
+                    role.role_id
+                )
+            )
+            return cursor.rowcount > 0
 
     def get_by_id(self, role_id: int) -> Optional[Role]:
 
@@ -35,7 +53,6 @@ class RoleRepository(BaseRepository):
         """
 
         with self.connection() as connection:
-
             row = connection.execute(
                 query, (role_id,)
             ).fetchone()
@@ -47,11 +64,10 @@ class RoleRepository(BaseRepository):
         query = """
             SELECT *
             FROM roles
-            WHERE role_name = ?
+            WHERE role_name = ? COLLATE NOCASE
         """
 
         with self.connection() as connection:
-
             row = connection.execute(
                 query, (role_name.strip(),)
             ).fetchone()
@@ -67,7 +83,6 @@ class RoleRepository(BaseRepository):
         """
 
         with self.connection() as connection:
-
             rows = connection.execute(query).fetchall()
 
             return [
@@ -75,30 +90,74 @@ class RoleRepository(BaseRepository):
                 for row in rows
             ]
 
-    def assign_to_user(self, user_id: int, role_id: int) -> None:
+    def get_user_count(self, role_id: int) -> int:
+
+        query = """
+            SELECT COUNT(*)
+            FROM user_roles
+            WHERE role_id = ?
+        """
+
+        with self.connection() as connection:
+            return connection.execute(
+                query, (role_id,)
+            ).fetchone()[0]
+
+    def assign_to_user(
+        self,
+        user_id: int,
+        role_id: int,
+        connection=None
+    ) -> None:
 
         query = """
             INSERT OR IGNORE INTO user_roles (user_id, role_id)
             VALUES (?, ?)
         """
 
-        with self.connection() as connection:
-            connection.execute(query, (user_id, role_id))
+        with self.connection_scope(connection) as conn:
+            conn.execute(query, (user_id, role_id))
 
-    def remove_from_user(self, user_id: int, role_id: int) -> bool:
+    def remove_from_user(
+        self,
+        user_id: int,
+        role_id: int,
+        connection=None
+    ) -> bool:
 
         query = """
             DELETE FROM user_roles
             WHERE user_id = ? AND role_id = ?
         """
 
-        with self.connection() as connection:
-
-            cursor = connection.execute(
+        with self.connection_scope(connection) as conn:
+            cursor = conn.execute(
                 query, (user_id, role_id)
             )
-
             return cursor.rowcount > 0
+
+    def set_user_roles(
+        self,
+        user_id: int,
+        role_ids: list[int],
+        connection=None
+    ) -> None:
+
+        with self.connection_scope(connection) as conn:
+
+            conn.execute(
+                "DELETE FROM user_roles WHERE user_id = ?",
+                (user_id,)
+            )
+
+            for role_id in set(role_ids):
+                conn.execute(
+                    """
+                    INSERT INTO user_roles (user_id, role_id)
+                    VALUES (?, ?)
+                    """,
+                    (user_id, role_id)
+                )
 
     def get_user_roles(self, user_id: int) -> list[Role]:
 
@@ -112,7 +171,6 @@ class RoleRepository(BaseRepository):
         """
 
         with self.connection() as connection:
-
             rows = connection.execute(
                 query, (user_id,)
             ).fetchall()

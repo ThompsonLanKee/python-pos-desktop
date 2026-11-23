@@ -1,6 +1,5 @@
 
 from typing import Optional
-
 from sqlite3 import Row
 
 from src.models import User
@@ -8,14 +7,10 @@ from src.repositories.base_repository import BaseRepository
 
 
 class UserRepository(BaseRepository):
-    """
-    Handles database operations for User entities.
-    """
 
-    def create(self, user: User) -> int:
-        """
-        Create a new user and return the generated user ID.
-        """
+    """Handles database operations for User entities."""
+
+    def create(self, user: User, connection=None) -> int:
 
         query = """
             INSERT INTO users (
@@ -27,9 +22,8 @@ class UserRepository(BaseRepository):
             VALUES (?, ?, ?, ?)
         """
 
-        with self.connection() as connection:
-
-            cursor = connection.execute(
+        with self.connection_scope(connection) as conn:
+            cursor = conn.execute(
                 query,
                 (
                     user.username,
@@ -38,60 +32,46 @@ class UserRepository(BaseRepository):
                     int(user.is_active)
                 )
             )
-
             return cursor.lastrowid
 
     def get_by_id(self, user_id: int) -> Optional[User]:
-        """
-        Retrieve a user by their primary key.
-        """
 
-        query = """
-            SELECT *
-            FROM users
-            WHERE user_id = ?
-        """
+        query = "SELECT * FROM users WHERE user_id = ?"
 
         with self.connection() as connection:
-
-            row = connection.execute(
-                query,
-                (user_id,)
-            ).fetchone()
-
-            if row is None:
-                return None
-
-            return self._to_user(row)
+            row = connection.execute(query, (user_id,)).fetchone()
+            return self._to_user(row) if row else None
 
     def get_by_username(self, username: str) -> Optional[User]:
-        """
-        Retrieve a user by their username.
-        """
+
+        query = "SELECT * FROM users WHERE username = ? COLLATE NOCASE"
+
+        with self.connection() as connection:
+            row = connection.execute(
+                query, (username.strip(),)
+            ).fetchone()
+            return self._to_user(row) if row else None
+
+    def get_all(self, search: str = "") -> list[User]:
 
         query = """
             SELECT *
             FROM users
-            WHERE username = ?
+            WHERE username LIKE ?
+               OR full_name LIKE ?
+            ORDER BY user_id
         """
+
+        search_term = f"%{search.strip()}%"
 
         with self.connection() as connection:
+            rows = connection.execute(
+                query, (search_term, search_term)
+            ).fetchall()
 
-            row = connection.execute(
-                query,
-                (username.strip(),)
-            ).fetchone()
+            return [self._to_user(row) for row in rows]
 
-            if row is None:
-                return None
-
-            return self._to_user(row)
-
-    def update(self, user: User) -> bool:
-        """
-        Update user profile information.
-        Does not modify the password hash.
-        """
+    def update(self, user: User, connection=None) -> bool:
 
         if user.user_id is None:
             raise ValueError("User ID is required.")
@@ -104,9 +84,8 @@ class UserRepository(BaseRepository):
             WHERE user_id = ?
         """
 
-        with self.connection() as connection:
-
-            cursor = connection.execute(
+        with self.connection_scope(connection) as conn:
+            cursor = conn.execute(
                 query,
                 (
                     user.username,
@@ -115,13 +94,14 @@ class UserRepository(BaseRepository):
                     user.user_id
                 )
             )
-
             return cursor.rowcount > 0
 
-    def set_active(self, user_id: int, is_active: bool) -> bool:
-        """
-        Activate or deactivate a user account.
-        """
+    def set_active(
+        self,
+        user_id: int,
+        is_active: bool,
+        connection=None
+    ) -> bool:
 
         query = """
             UPDATE users
@@ -129,25 +109,35 @@ class UserRepository(BaseRepository):
             WHERE user_id = ?
         """
 
-        with self.connection() as connection:
-
-            cursor = connection.execute(
-                query,
-                (
-                    int(is_active),
-                    user_id
-                )
+        with self.connection_scope(connection) as conn:
+            cursor = conn.execute(
+                query, (int(is_active), user_id)
             )
-
             return cursor.rowcount > 0
 
-    def _to_user(self, row: Row) -> User:
+    def update_password(
+        self,
+        user_id: int,
+        password_hash: str,
+        connection=None
+    ) -> bool:
+
+        query = """
+            UPDATE users
+            SET password_hash = ?
+            WHERE user_id = ?
         """
-        Convert a SQLite row into a User entity.
-        """
+
+        with self.connection_scope(connection) as conn:
+            cursor = conn.execute(
+                query, (password_hash, user_id)
+            )
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def _to_user(row: Row) -> User:
 
         data = dict(row)
-
         data["is_active"] = bool(data["is_active"])
 
         return User(**data)
