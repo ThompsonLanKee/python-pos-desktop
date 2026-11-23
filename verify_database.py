@@ -46,6 +46,8 @@ def verify_database():
             "sale_items",
             "payments",
             "refunds",
+            "sales_returns",
+            "sales_return_items",
         }
 
         actual_tables = {table["name"] for table in tables}
@@ -62,6 +64,8 @@ def verify_database():
             "sale_items",
             "payments",
             "refunds",
+            "sales_returns",
+            "sales_return_items",
         ]
 
         for table_name in expected_tables:
@@ -81,7 +85,7 @@ def verify_database():
 
             print(f"{table_name}: VERIFIED")
 
-        print("Sales and refund database schema verification passed!")
+        print("Sales, refund, and return database schema verification passed!")
 
     finally:
         connection.close()

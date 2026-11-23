@@ -572,6 +572,7 @@ class Database:
 
                         payment_id INTEGER NOT NULL,
                         sale_id INTEGER NOT NULL,
+                        return_id INTEGER,
 
                         amount INTEGER NOT NULL
                             CHECK (amount > 0),
@@ -587,6 +588,74 @@ class Database:
 
                         FOREIGN KEY (sale_id)
                             REFERENCES sales(sale_id)
+                            ON DELETE RESTRICT,
+
+                        FOREIGN KEY (return_id)
+                            REFERENCES sales_returns(return_id)
+                            ON DELETE RESTRICT
+                    );
+
+                    CREATE TABLE IF NOT EXISTS sales_returns (
+
+                        return_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        return_number TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                        sale_id INTEGER NOT NULL,
+                        processed_by INTEGER,
+                        return_status TEXT NOT NULL DEFAULT 'COMPLETED'
+                            CHECK (
+                                return_status IN ('COMPLETED', 'VOIDED')
+                            ),
+                        total_refund_amount INTEGER NOT NULL DEFAULT 0
+                            CHECK (total_refund_amount >= 0),
+                        reason TEXT,
+                        notes TEXT,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (sale_id)
+                            REFERENCES sales(sale_id)
+                            ON DELETE RESTRICT,
+
+                        FOREIGN KEY (processed_by)
+                            REFERENCES users(user_id)
+                            ON DELETE RESTRICT
+                    );
+
+                    CREATE TABLE IF NOT EXISTS sales_return_items (
+
+                        return_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        return_id INTEGER NOT NULL,
+                        sale_item_id INTEGER NOT NULL,
+                        variant_id INTEGER NOT NULL,
+                        quantity INTEGER NOT NULL
+                            CHECK (quantity > 0),
+                        unit_refund_amount INTEGER NOT NULL
+                            CHECK (unit_refund_amount >= 0),
+                        line_refund_amount INTEGER NOT NULL
+                            CHECK (line_refund_amount >= 0),
+                        restock INTEGER NOT NULL DEFAULT 1
+                            CHECK (restock IN (0, 1)),
+                        condition TEXT NOT NULL DEFAULT 'GOOD'
+                            CHECK (
+                                condition IN (
+                                    'GOOD',
+                                    'DAMAGED',
+                                    'DEFECTIVE'
+                                )
+                            ),
+                        notes TEXT,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (return_id)
+                            REFERENCES sales_returns(return_id)
+                            ON DELETE RESTRICT,
+
+                        FOREIGN KEY (sale_item_id)
+                            REFERENCES sale_items(sale_item_id)
+                            ON DELETE RESTRICT,
+
+                        FOREIGN KEY (variant_id)
+                            REFERENCES product_variants(variant_id)
                             ON DELETE RESTRICT
                     );
 
@@ -652,7 +721,34 @@ class Database:
                     CREATE INDEX IF NOT EXISTS idx_refunds_sale_id
                     ON refunds(sale_id);
 
+                    CREATE INDEX IF NOT EXISTS idx_sales_returns_sale
+                    ON sales_returns(sale_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_sales_returns_date
+                    ON sales_returns(created_at);
+
+                    CREATE INDEX IF NOT EXISTS idx_sales_return_items_return
+                    ON sales_return_items(return_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_sales_return_items_sale_item
+                    ON sales_return_items(sale_item_id);
+
                 """)
+
+                refund_columns = {
+                    row["name"]
+                    for row in connection.execute(
+                        "PRAGMA table_info(refunds)"
+                    ).fetchall()
+                }
+
+                if "return_id" not in refund_columns:
+                    connection.execute("""
+                        ALTER TABLE refunds
+                        ADD COLUMN return_id INTEGER
+                            REFERENCES sales_returns(return_id)
+                            ON DELETE RESTRICT
+                    """)
 
                 category_columns = {
                     row["name"]

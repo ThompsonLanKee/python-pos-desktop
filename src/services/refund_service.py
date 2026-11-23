@@ -20,20 +20,52 @@ class RefundService:
     # ==========================================
 
     def record_refund(self, refund: Refund) -> int:
-        """
-        Record a refund against an original completed payment.
-
-        Multiple partial refunds are supported, but their
-        combined amount cannot exceed the original payment.
-        """
+        """Record a refund linked to a completed physical sales return."""
 
         if not isinstance(refund, Refund):
             raise TypeError("refund must be a Refund instance.")
 
+        if refund.return_id is None:
+            raise ValueError("A sales return ID is required.")
+
         try:
             with self.database.transaction() as connection:
 
-                # 1. Retrieve original payment and sale.
+                # 1. Verify that the return belongs to this sale.
+                sales_return = connection.execute(
+                    """
+                    SELECT
+                        return_id,
+                        sale_id,
+                        return_status,
+                        total_refund_amount
+                    FROM sales_returns
+                    WHERE return_id = ?
+                      AND sale_id = ?
+                    """,
+                    (refund.return_id, refund.sale_id)
+                ).fetchone()
+
+                if sales_return is None:
+                    raise ValueError(
+                        "Sales return does not exist for this sale."
+                    )
+
+                if sales_return["return_status"] != "COMPLETED":
+                    raise ValueError(
+                        "Only completed sales returns can be refunded."
+                    )
+
+                return_amount = int(
+                    sales_return["total_refund_amount"]
+                )
+
+                if return_amount <= 0:
+                    raise ValueError(
+                        "This sales return has no refundable amount."
+                    )
+
+                # 2. Verify original payment and sale.
                 payment = connection.execute(
                     """
                     SELECT
@@ -67,43 +99,61 @@ class RefundService:
                         "Cannot refund a voided or fully refunded sale."
                     )
 
-                # 2. Calculate previous refunds for this payment.
-                previous_refunds = connection.execute(
-                    """
-                    SELECT COALESCE(SUM(amount), 0) AS refunded_amount
-                    FROM refunds
-                    WHERE payment_id = ?
-                    """,
-                    (refund.payment_id,)
-                ).fetchone()
-
-                already_refunded = int(
-                    previous_refunds["refunded_amount"]
+                # 3. Check remaining refundable amount for this return.
+                already_refunded_for_return = int(
+                    connection.execute(
+                        """
+                        SELECT COALESCE(SUM(amount), 0)
+                            AS refunded_amount
+                        FROM refunds
+                        WHERE return_id = ?
+                        """,
+                        (refund.return_id,)
+                    ).fetchone()["refunded_amount"]
                 )
 
-                refundable_balance = (
-                    int(payment["amount"]) - already_refunded
+                remaining_return_amount = (
+                    return_amount - already_refunded_for_return
                 )
 
-                if refund.amount > refundable_balance:
+                if refund.amount > remaining_return_amount:
                     raise ValueError(
-                        "Refund exceeds the refundable payment balance. "
-                        f"Remaining refundable amount: "
-                        f"{refundable_balance}."
+                        "Refund exceeds the remaining refundable "
+                        f"amount for this return: "
+                        f"{remaining_return_amount}."
                     )
 
-                if refundable_balance <= 0:
+                # 4. Check remaining refundable amount for payment.
+                already_refunded_for_payment = int(
+                    connection.execute(
+                        """
+                        SELECT COALESCE(SUM(amount), 0)
+                            AS refunded_amount
+                        FROM refunds
+                        WHERE payment_id = ?
+                        """,
+                        (refund.payment_id,)
+                    ).fetchone()["refunded_amount"]
+                )
+
+                remaining_payment_amount = (
+                    int(payment["amount"])
+                    - already_refunded_for_payment
+                )
+
+                if refund.amount > remaining_payment_amount:
                     raise ValueError(
-                        "This payment has already been fully refunded."
+                        "Refund exceeds the remaining refundable "
+                        f"payment balance: {remaining_payment_amount}."
                     )
 
-                # 3. Insert refund.
+                # 5. Insert refund within the same transaction.
                 refund_id = self.refund_repository.create(
                     refund,
                     connection=connection
                 )
 
-                # 4. Calculate total paid and refunded for this sale.
+                # 6. Calculate totals for the entire sale.
                 totals = connection.execute(
                     """
                     SELECT
@@ -126,8 +176,8 @@ class RefundService:
                 paid_amount = int(totals["paid_amount"])
                 refunded_amount = int(totals["refunded_amount"])
 
-                # 5. Mark sale refunded only when the full sale
-                # amount has been paid and subsequently refunded.
+                # 7. Mark sale fully refunded only when all paid
+                # amounts have been refunded.
                 if (
                     paid_amount == int(payment["total_amount"])
                     and refunded_amount == int(payment["total_amount"])

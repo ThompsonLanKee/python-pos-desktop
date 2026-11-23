@@ -5,32 +5,24 @@ from typing import Optional
 
 @dataclass
 class Refund:
-    """Represents money refunded against an original payment."""
+    """Represents money refunded against an original payment and sale return."""
 
     payment_id: int
     sale_id: int
     amount: int
 
     refund_id: Optional[int] = None
+    return_id: Optional[int] = None
     reference_number: Optional[str] = None
     notes: Optional[str] = None
     created_at: Optional[str] = None
 
     def __post_init__(self):
+        self._validate_positive_id(self.payment_id, "Payment ID")
+        self._validate_positive_id(self.sale_id, "Sale ID")
 
-        if (
-            not isinstance(self.payment_id, int)
-            or isinstance(self.payment_id, bool)
-            or self.payment_id <= 0
-        ):
-            raise ValueError("Payment ID must be a positive integer.")
-
-        if (
-            not isinstance(self.sale_id, int)
-            or isinstance(self.sale_id, bool)
-            or self.sale_id <= 0
-        ):
-            raise ValueError("Sale ID must be a positive integer.")
+        if self.return_id is not None:
+            self._validate_positive_id(self.return_id, "Return ID")
 
         if (
             not isinstance(self.amount, int)
@@ -40,6 +32,13 @@ class Refund:
             raise ValueError("Refund amount must be a positive integer.")
 
         if self.reference_number is not None:
-            self.reference_number = (
-                self.reference_number.strip() or None
-            )
+            self.reference_number = self.reference_number.strip() or None
+
+    @staticmethod
+    def _validate_positive_id(value, field_name):
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value <= 0
+        ):
+            raise ValueError(f"{field_name} must be a positive integer.")

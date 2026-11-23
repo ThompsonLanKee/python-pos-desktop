@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
+from src.views.sale_view import SaleView
+
 
 class MainWindow(QMainWindow):
     """
@@ -109,13 +111,15 @@ class MainWindow(QMainWindow):
         self,
         session,
         session_manager,
-        authorization_service
+        authorization_service,
+        sale_service
     ):
         super().__init__()
 
         self.session = session
         self.session_manager = session_manager
         self.authorization_service = authorization_service
+        self.sale_service = sale_service
 
         # Retrieve current user's permissions
         self.permissions = (
@@ -366,6 +370,11 @@ class MainWindow(QMainWindow):
 
         if page_key == "dashboard":
             return self._build_dashboard_page()
+
+        if page_key == "sales":
+            return SaleView(
+                sale_service=self.sale_service
+            )
 
         page = QWidget()
 

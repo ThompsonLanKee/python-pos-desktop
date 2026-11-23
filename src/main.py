@@ -13,6 +13,7 @@ from src.repositories import (
 
 from src.services.auth_service import AuthService
 from src.services.authorization_service import AuthorizationService
+from src.services.sale_service import SaleService
 
 from src.views.login_view import LoginView
 from src.views.main_window import MainWindow
@@ -43,6 +44,8 @@ def main():
         permission_repository
     )
 
+    sale_service = SaleService(database)
+
     # Login window
     login_view = LoginView(auth_service)
 
@@ -55,7 +58,8 @@ def main():
         main_window = MainWindow(
             session,
             session_manager,
-            authorization_service
+            authorization_service,
+            sale_service
         )
 
         main_window.logout_requested.connect(show_login)

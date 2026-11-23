@@ -55,10 +55,10 @@ class SalesReturnItem:
             ):
                 raise ValueError(f"{name} must be a non-negative integer.")
 
-        if self.line_refund_amount != (
-            self.quantity * self.unit_refund_amount
-        ):
-            raise ValueError("Line refund amount calculation is incorrect.")
+            if self.line_refund_amount > (
+                 self.quantity * self.unit_refund_amount
+            ):
+                 raise ValueError("Line refund cannot exceed the original gross amount.")
 
         if self.restock not in (0, 1):
             raise ValueError("Restock must be 0 or 1.")

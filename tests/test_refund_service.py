@@ -7,7 +7,6 @@ from src.models import (
     Product,
     ProductVariant,
     Sale,
-    Payment,
     Refund,
 )
 from src.repositories import (
@@ -15,240 +14,502 @@ from src.repositories import (
     ProductRepository,
     ProductVariantRepository,
     InventoryRepository,
-    PaymentRepository,
-    SaleRepository,
     RefundRepository,
 )
 from src.services.sale_service import SaleService
+from src.services.sales_return_service import SalesReturnService
 from src.services.refund_service import RefundService
-from src.services.payment_service import PaymentService
+
+
+class RefundServiceTest:
+
+    def __init__(self):
+        self.database = Database()
+        self.database.initialize()
+
+        self.category_repository = CategoryRepository(self.database)
+        self.product_repository = ProductRepository(self.database)
+        self.variant_repository = ProductVariantRepository(self.database)
+        self.inventory_repository = InventoryRepository(self.database)
+
+        self.refund_repository = RefundRepository(self.database)
+
+        self.sale_service = SaleService(self.database)
+        self.return_service = SalesReturnService(self.database)
+        self.refund_service = RefundService(self.database)
+
+        self.suffix = uuid4().hex[:10]
+        self.variant_id = self._create_product()
+
+    # --------------------------------------------------
+    # TEST DATA
+    # --------------------------------------------------
+
+    def _create_product(self):
+        category_id = self.category_repository.create(
+            Category(
+                category_name=f"Refund Category {self.suffix}"
+            )
+        )
+
+        product_id = self.product_repository.create(
+            Product(
+                product_name=f"Refund Product {self.suffix}",
+                category_id=category_id,
+                description="Product for refund service tests",
+            )
+        )
+
+        variant_id = self.variant_repository.create(
+            ProductVariant(
+                product_id=product_id,
+                color_id=None,
+                size_id=None,
+                sku=f"REFUND-{self.suffix}",
+                barcode=None,
+                cost_price=500,
+                selling_price=1000,
+            )
+        )
+
+        self.inventory_repository.create(variant_id)
+        self.inventory_repository.adjust_quantity(variant_id, 30)
+
+        return variant_id
+
+    def _create_sale(self, quantity=3, payment_amount=None):
+        sale_number = f"REFUND-SALE-{uuid4().hex[:10]}"
+        total_amount = quantity * 1000
+
+        if payment_amount is None:
+            payment_amount = total_amount
+
+        sale = Sale(
+            sale_number=sale_number,
+            subtotal=total_amount,
+            discount_amount=0,
+            tax_amount=0,
+            total_amount=total_amount,
+        )
+
+        result = self.sale_service.create_sale(
+            sale=sale,
+            items=[
+                {
+                    "variant_id": self.variant_id,
+                    "quantity": quantity,
+                }
+            ],
+            payment={
+                "payment_method": "CASH",
+                "amount": payment_amount,
+            },
+        )
+
+        return {
+            "sale_id": result["sale_id"],
+            "sale_item_id": result["sale_item_ids"][0],
+            "sale_number": sale_number,
+            "payment_id": result["payment_id"],
+            "total_amount": total_amount,
+            "quantity": quantity,
+            "payment_amount": payment_amount,
+        }
+
+    def _create_return(self, sale_data, quantity):
+        return self.return_service.create_return(
+            return_number=f"REFUND-RETURN-{uuid4().hex[:10]}",
+            sale_id=sale_data["sale_id"],
+            items=[
+                {
+                    "sale_item_id": sale_data["sale_item_id"],
+                    "quantity": quantity,
+                    "restock": True,
+                    "condition": "GOOD",
+                }
+            ],
+            reason="Refund service test",
+        )
+
+    def _record_refund(
+        self,
+        sale_data,
+        return_data,
+        amount,
+        payment_id=None,
+    ):
+        return self.refund_service.record_refund(
+            Refund(
+                payment_id=(
+                    payment_id
+                    if payment_id is not None
+                    else sale_data["payment_id"]
+                ),
+                sale_id=sale_data["sale_id"],
+                return_id=return_data["return_id"],
+                amount=amount,
+                reference_number=f"REF-{uuid4().hex[:10]}",
+                notes="Refund service test",
+            )
+        )
+
+    def _refund_count(self, return_id):
+        return len(
+            self.refund_repository.get_by_return(return_id)
+        )
+
+    # --------------------------------------------------
+    # TEST 1: SUCCESSFUL PARTIAL REFUND
+    # --------------------------------------------------
+
+    def test_partial_refund(self):
+        sale_data = self._create_sale(quantity=2)
+        return_data = self._create_return(sale_data, quantity=1)
+
+        refund_id = self._record_refund(
+            sale_data,
+            return_data,
+            amount=500,
+        )
+
+        assert refund_id > 0
+
+        refunds = self.refund_repository.get_by_return(
+            return_data["return_id"]
+        )
+
+        assert len(refunds) == 1
+        assert refunds[0].amount == 500
+
+        print("Successful partial refund: PASSED")
+
+    # --------------------------------------------------
+    # TEST 2: MULTIPLE PARTIAL REFUNDS
+    # --------------------------------------------------
+
+    def test_multiple_partial_refunds(self):
+        sale_data = self._create_sale(quantity=2)
+        return_data = self._create_return(sale_data, quantity=1)
+
+        first_id = self._record_refund(
+            sale_data,
+            return_data,
+            amount=400,
+        )
+
+        second_id = self._record_refund(
+            sale_data,
+            return_data,
+            amount=600,
+        )
+
+        assert first_id > 0
+        assert second_id > 0
+
+        total_refunded = self.refund_repository.get_total_by_return(
+            return_data["return_id"]
+        )
+
+        assert total_refunded == 1000
+
+        print("Multiple partial refunds: PASSED")
+
+    # --------------------------------------------------
+    # TEST 3: FULL SALE REFUND
+    # --------------------------------------------------
+
+    def test_full_sale_refund(self):
+        sale_data = self._create_sale(quantity=2)
+        return_data = self._create_return(sale_data, quantity=2)
+
+        self._record_refund(
+            sale_data,
+            return_data,
+            amount=2000,
+        )
+
+        summary = self.refund_service.get_refund_summary(
+            sale_data["sale_id"]
+        )
+
+        assert summary["paid_amount"] == 2000
+        assert summary["refunded_amount"] == 2000
+        assert summary["net_paid_amount"] == 0
+        assert summary["is_fully_refunded"] is True
+        assert summary["sale_status"] == "REFUNDED"
+
+        print("Full sale refund: PASSED")
+
+    # --------------------------------------------------
+    # TEST 4: REFUND EXCEEDS RETURN AMOUNT
+    # --------------------------------------------------
+
+    def test_return_amount_limit(self):
+        sale_data = self._create_sale(quantity=2)
+        return_data = self._create_return(sale_data, quantity=1)
+
+        try:
+            self._record_refund(
+                sale_data,
+                return_data,
+                amount=1500,
+            )
+        except ValueError:
+            assert self._refund_count(
+                return_data["return_id"]
+            ) == 0
+
+            print("Return refund limit: PASSED")
+        else:
+            raise AssertionError(
+                "Refund exceeding the return amount was accepted."
+            )
+
+    # --------------------------------------------------
+    # TEST 5: REFUND EXCEEDS PAYMENT BALANCE
+    # --------------------------------------------------
+
+    def test_payment_amount_limit(self):
+        sale_data = self._create_sale(
+            quantity=3,
+            payment_amount=2000,
+        )
+
+        return_data = self._create_return(
+            sale_data,
+            quantity=3,
+        )
+
+        try:
+            self._record_refund(
+                sale_data,
+                return_data,
+                amount=2500,
+            )
+        except ValueError:
+            assert self._refund_count(
+                return_data["return_id"]
+            ) == 0
+
+            print("Original payment refund limit: PASSED")
+        else:
+            raise AssertionError(
+                "Refund exceeding the original payment was accepted."
+            )
+
+    # --------------------------------------------------
+    # TEST 6: REFUND CANNOT EXCEED REMAINING BALANCE
+    # --------------------------------------------------
+
+    def test_remaining_payment_balance(self):
+        sale_data = self._create_sale(quantity=2)
+        return_data = self._create_return(sale_data, quantity=2)
+
+        self._record_refund(
+            sale_data,
+            return_data,
+            amount=1500,
+        )
+
+        try:
+            self._record_refund(
+                sale_data,
+                return_data,
+                amount=600,
+            )
+        except ValueError:
+            total = self.refund_repository.get_total_by_payment(
+                sale_data["payment_id"]
+            )
+
+            assert total == 1500
+
+            print("Remaining payment balance prevention: PASSED")
+        else:
+            raise AssertionError(
+                "Refund exceeding the remaining payment balance was accepted."
+            )
+
+    # --------------------------------------------------
+    # TEST 7: RETURN MUST BELONG TO THE SAME SALE
+    # --------------------------------------------------
+
+    def test_return_sale_mismatch(self):
+        first_sale = self._create_sale(quantity=2)
+        second_sale = self._create_sale(quantity=2)
+
+        second_return = self._create_return(
+            second_sale,
+            quantity=1,
+        )
+
+        try:
+            self._record_refund(
+                first_sale,
+                second_return,
+                amount=500,
+            )
+        except ValueError:
+            assert self._refund_count(
+                second_return["return_id"]
+            ) == 0
+
+            print("Return and sale relationship validation: PASSED")
+        else:
+            raise AssertionError(
+                "A return belonging to another sale was accepted."
+            )
+
+    # --------------------------------------------------
+    # TEST 8: INVALID RETURN ID
+    # --------------------------------------------------
+
+    def test_invalid_return(self):
+        sale_data = self._create_sale(quantity=2)
+
+        try:
+            self.refund_service.record_refund(
+                Refund(
+                    payment_id=sale_data["payment_id"],
+                    sale_id=sale_data["sale_id"],
+                    return_id=999999999,
+                    amount=500,
+                )
+            )
+        except ValueError:
+            print("Invalid return prevention: PASSED")
+        else:
+            raise AssertionError(
+                "Refund for a nonexistent return was accepted."
+            )
+
+    # --------------------------------------------------
+    # TEST 9: NON-COMPLETED PAYMENT
+    # --------------------------------------------------
+
+    def test_non_completed_payment(self):
+        sale_data = self._create_sale(quantity=2)
+        return_data = self._create_return(sale_data, quantity=1)
+
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO payments (
+                    sale_id,
+                    payment_method,
+                    amount,
+                    payment_status,
+                    reference_number
+                )
+                VALUES (?, 'CASH', ?, 'FAILED', ?)
+                """,
+                (
+                    sale_data["sale_id"],
+                    1000,
+                    f"FAILED-{uuid4().hex[:10]}",
+                ),
+            )
+
+            failed_payment_id = cursor.lastrowid
+
+        try:
+            self._record_refund(
+                sale_data,
+                return_data,
+                amount=500,
+                payment_id=failed_payment_id,
+            )
+        except ValueError:
+            print("Non-completed payment rejection: PASSED")
+        else:
+            raise AssertionError(
+                "A refund against a failed payment was accepted."
+            )
+
+    # --------------------------------------------------
+    # TEST 10: REFUND SUMMARY
+    # --------------------------------------------------
+
+    def test_refund_summary(self):
+        sale_data = self._create_sale(quantity=2)
+        return_data = self._create_return(sale_data, quantity=1)
+
+        self._record_refund(
+            sale_data,
+            return_data,
+            amount=400,
+        )
+
+        summary = self.refund_service.get_refund_summary(
+            sale_data["sale_id"]
+        )
+
+        assert summary["sale_id"] == sale_data["sale_id"]
+        assert summary["paid_amount"] == 2000
+        assert summary["refunded_amount"] == 400
+        assert summary["net_paid_amount"] == 1600
+        assert summary["refundable_amount"] == 1600
+        assert summary["outstanding_balance"] == 0
+        assert summary["is_fully_refunded"] is False
+
+        print("Refund summary calculation: PASSED")
+
+    # --------------------------------------------------
+    # TEST 11: TRANSACTION ROLLBACK
+    # --------------------------------------------------
+
+    def test_refund_transaction_rollback(self):
+        sale_data = self._create_sale(quantity=2)
+        return_data = self._create_return(sale_data, quantity=1)
+
+        refunds_before = self._refund_count(
+            return_data["return_id"]
+        )
+
+        try:
+            self._record_refund(
+                sale_data,
+                return_data,
+                amount=1500,
+            )
+        except ValueError:
+            refunds_after = self._refund_count(
+                return_data["return_id"]
+            )
+
+            assert refunds_after == refunds_before
+
+            print("Refund transaction rollback: PASSED")
+        else:
+            raise AssertionError(
+                "Invalid refund unexpectedly succeeded."
+            )
+
+    # --------------------------------------------------
+    # RUN ALL TESTS
+    # --------------------------------------------------
+
+    def run_tests(self):
+        print("\nStarting RefundService tests...\n")
+
+        self.test_partial_refund()
+        self.test_multiple_partial_refunds()
+        self.test_full_sale_refund()
+        self.test_return_amount_limit()
+        self.test_payment_amount_limit()
+        self.test_remaining_payment_balance()
+        self.test_return_sale_mismatch()
+        self.test_invalid_return()
+        self.test_non_completed_payment()
+        self.test_refund_summary()
+        self.test_refund_transaction_rollback()
+
+        print("\nAll RefundService tests passed!")
 
 
 def run_tests():
-
-    database = Database()
-    database.initialize()
-
-    category_repo = CategoryRepository(database)
-    product_repo = ProductRepository(database)
-    variant_repo = ProductVariantRepository(database)
-    inventory_repo = InventoryRepository(database)
-    payment_repo = PaymentRepository(database)
-    sale_repo = SaleRepository(database)
-    refund_repo = RefundRepository(database)
-
-    sale_service = SaleService(database)
-    refund_service = RefundService(database)
-    payment_service = PaymentService(database)
-
-    suffix = uuid4().hex[:10]
-
-    print("\nStarting RefundService tests...\n")
-
-    # 1. Prepare product and inventory.
-    category_id = category_repo.create(
-        Category(category_name=f"Refund Category {suffix}")
-    )
-
-    product_id = product_repo.create(
-        Product(
-            product_name=f"Refund Product {suffix}",
-            category_id=category_id
-        )
-    )
-
-    variant_id = variant_repo.create(
-        ProductVariant(
-            product_id=product_id,
-            color_id=None,
-            size_id=None,
-            sku=f"REFUND-{suffix}",
-            barcode=None,
-            cost_price=500,
-            selling_price=1000
-        )
-    )
-
-    inventory_repo.create(variant_id)
-    inventory_repo.adjust_quantity(variant_id, 10)
-
-    # 2. Create a sale.
-    sale_number = f"REFUND-SALE-{suffix}"
-
-    sale = Sale(
-        sale_number=sale_number,
-        subtotal=2000,
-        discount_amount=0,
-        tax_amount=0,
-        total_amount=2000
-    )
-
-    result = sale_service.create_sale(
-        sale=sale,
-        items=[
-            {
-                "variant_id": variant_id,
-                "quantity": 2
-            }
-        ]
-    )
-
-    sale_id = result["sale_id"]
-
-    print("Sale creation: PASSED")
-
-    # 3. Record original completed payment.
-    payment_id = payment_repo.create(
-        Payment(
-            sale_id=sale_id,
-            payment_method="CASH",
-            amount=2000
-        )
-    )
-
-    payment_repo.create(
-        Payment(
-            sale_id=sale_id,
-            payment_method="CARD",
-            amount=100,
-            payment_status="FAILED"
-        )
-    )
-
-    print("Original payment creation: PASSED")
-
-    # 4. First partial refund.
-    first_refund_id = refund_service.record_refund(
-        Refund(
-            payment_id=payment_id,
-            sale_id=sale_id,
-            amount=600,
-            notes="First partial refund"
-        )
-    )
-
-    assert first_refund_id > 0
-
-    print("First partial refund: PASSED")
-
-    # 5. Second partial refund.
-    second_refund_id = refund_service.record_refund(
-        Refund(
-            payment_id=payment_id,
-            sale_id=sale_id,
-            amount=400,
-            notes="Second partial refund"
-        )
-    )
-
-    assert second_refund_id > first_refund_id
-
-    print("Second partial refund: PASSED")
-
-    # 6. Prevent over-refunding.
-    try:
-        refund_service.record_refund(
-            Refund(
-                payment_id=payment_id,
-                sale_id=sale_id,
-                amount=1001
-            )
-        )
-
-    except ValueError:
-        print("Over-refund prevention: PASSED")
-
-    else:
-        raise AssertionError("Over-refund was accepted.")
-
-    # 7. Verify refund summary.
-    summary = refund_service.get_refund_summary(sale_id)
-
-    assert summary["paid_amount"] == 2000
-    assert summary["refunded_amount"] == 1000
-    assert summary["net_paid_amount"] == 1000
-    assert summary["refundable_amount"] == 1000
-    assert summary["is_fully_refunded"] is False
-
-    payment_summary = payment_service.get_payment_summary(sale_id)
-    assert payment_summary["gross_paid_amount"] == 2000
-    assert payment_summary["paid_amount"] == 1000
-    assert payment_summary["net_paid_amount"] == 1000
-    assert payment_summary["outstanding_balance"] == 0
-    assert payment_summary["failed_amount"] == 100
-    assert payment_summary["refunded_amount"] == 1000
-    assert payment_summary["is_partially_paid"] is True
-
-    print("Partial refund summary: PASSED")
-    print("Refund-adjusted payment summary: PASSED")
-
-    # 8. Verify original payment remains completed.
-    original_payment = payment_repo.get_by_id(payment_id)
-
-    assert original_payment.payment_status == "COMPLETED"
-    assert original_payment.amount == 2000
-
-    print("Original payment preservation: PASSED")
-
-    # 9. Refund remaining amount.
-    refund_service.record_refund(
-        Refund(
-            payment_id=payment_id,
-            sale_id=sale_id,
-            amount=1000,
-            notes="Final refund"
-        )
-    )
-
-    final_summary = refund_service.get_refund_summary(sale_id)
-
-    assert final_summary["refunded_amount"] == 2000
-    assert final_summary["net_paid_amount"] == 0
-    assert final_summary["is_fully_refunded"] is True
-
-    payment_summary = payment_service.get_payment_summary(sale_id)
-    assert payment_summary["gross_paid_amount"] == 2000
-    assert payment_summary["paid_amount"] == 0
-    assert payment_summary["refunded_amount"] == 2000
-    assert payment_summary["is_fully_paid"] is False
-    assert payment_summary["is_unpaid"] is True
-
-    print("Full refund completion: PASSED")
-
-    # 10. Verify sale status.
-    updated_sale = sale_repo.get_by_id(sale_id)
-
-    assert updated_sale.sale_status == "REFUNDED"
-
-    print("Sale status update: PASSED")
-
-    # 11. Verify refund history.
-    refunds = refund_repo.get_by_payment(payment_id)
-
-    assert len(refunds) == 3
-    assert sum(refund.amount for refund in refunds) == 2000
-
-    print("Refund history retrieval: PASSED")
-
-    # 12. Prevent further refunds.
-    try:
-        refund_service.record_refund(
-            Refund(
-                payment_id=payment_id,
-                sale_id=sale_id,
-                amount=1
-            )
-        )
-
-    except ValueError:
-        print("Refund after full refund prevention: PASSED")
-
-    else:
-        raise AssertionError(
-            "Refund after full refund was accepted."
-        )
-
-    print("\nAll RefundService tests passed!")
+    test = RefundServiceTest()
+    test.run_tests()
 
 
 if __name__ == "__main__":

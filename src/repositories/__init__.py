@@ -13,6 +13,9 @@ from src.repositories.sale_repository import SaleRepository
 from src.repositories.sale_item_repository import SaleItemRepository
 from src.repositories.payment_repository import PaymentRepository
 from src.repositories.refund_repository import RefundRepository
+from src.repositories.sales_return_repository import SalesReturnRepository
+from src.repositories.sales_return_item_repository import SalesReturnItemRepository
+
 
 __all__ = [
     "UserRepository",
@@ -29,6 +32,8 @@ __all__ = [
     "SaleRepository",
     "SaleItemRepository",
     "PaymentRepository",
-    "RefundRepository"
+    "RefundRepository",
+    "SalesReturnRepository",
+    "SalesReturnItemRepository"
     
 ]
