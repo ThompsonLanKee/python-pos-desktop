@@ -7,9 +7,8 @@ from src.repositories.color_repository import ColorRepository
 from src.repositories.size_repository import SizeRepository
 from src.repositories.product_variant_repository import ProductVariantRepository
 from src.repositories.inventory_repository import InventoryRepository
-from src.repositories.inventory_transaction_repository import (
-    InventoryTransactionRepository
-)
+from src.repositories.customer_repository import CustomerRepository
+from src.repositories.inventory_transaction_repository import InventoryTransactionRepository
 
 
 __all__ = [
@@ -23,4 +22,5 @@ __all__ = [
     "ProductVariantRepository",
     "InventoryRepository",
     "InventoryTransactionRepository"
+    "CustomerRepository"
 ]

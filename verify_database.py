@@ -5,6 +5,7 @@ from src.core.database import Database
 def verify_database():
 
     database = Database()
+    database.initialize()
     connection = database.connect()
 
     try:
@@ -27,7 +28,7 @@ def verify_database():
         print("-" * 35)
         print(f"Total tables: {len(tables)}")
 
-        expected_tables = {
+        all_expected_tables = {
             "users",
             "roles",
             "permissions",
@@ -39,16 +40,46 @@ def verify_database():
             "sizes",
             "product_variants",
             "inventory",
-            "inventory_transactions"
+            "inventory_transactions",
+            "customers",
+            "sales",
+            "sale_items",
+            "payments",
         }
 
         actual_tables = {table["name"] for table in tables}
 
-        if actual_tables == expected_tables:
+        if actual_tables == all_expected_tables:
             print("Database verification successful!")
         else:
             print("Database verification incomplete.")
-            print("Missing:", expected_tables - actual_tables)
+            print("Missing:", all_expected_tables - actual_tables)
+
+        expected_tables = [
+            "customers",
+            "sales",
+            "sale_items",
+            "payments",
+        ]
+
+        for table_name in expected_tables:
+            result = connection.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name = ?
+                """,
+                (table_name,)
+            ).fetchone()
+
+            assert result is not None, (
+                f"Missing table: {table_name}"
+            )
+
+            print(f"{table_name}: VERIFIED")
+
+        print("Sales database schema verification passed!")
 
     finally:
         connection.close()

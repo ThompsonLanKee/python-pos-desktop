@@ -404,6 +404,168 @@ class Database:
                             ON DELETE RESTRICT
                     );
 
+                    -- ==================================
+                    -- CUSTOMERS
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS customers (
+
+                        customer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        customer_name TEXT NOT NULL,
+                        phone TEXT,
+                        email TEXT,
+                        address TEXT,
+
+                        is_active INTEGER NOT NULL DEFAULT 1
+                            CHECK (is_active IN (0, 1)),
+
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+
+
+                    -- ==================================
+                    -- SALES
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS sales (
+
+                        sale_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        sale_number TEXT NOT NULL UNIQUE COLLATE NOCASE,
+
+                        customer_id INTEGER,
+                        cashier_user_id INTEGER,
+
+                        subtotal INTEGER NOT NULL DEFAULT 0
+                            CHECK (subtotal >= 0),
+
+                        discount_amount INTEGER NOT NULL DEFAULT 0
+                            CHECK (discount_amount >= 0),
+
+                        tax_amount INTEGER NOT NULL DEFAULT 0
+                            CHECK (tax_amount >= 0),
+
+                        total_amount INTEGER NOT NULL DEFAULT 0
+                            CHECK (
+                                total_amount = subtotal - discount_amount + tax_amount
+                            ),
+
+                        sale_status TEXT NOT NULL DEFAULT 'COMPLETED'
+                            CHECK (
+                                sale_status IN (
+                                    'COMPLETED',
+                                    'VOIDED',
+                                    'REFUNDED'
+                                )
+                            ),
+
+                        notes TEXT,
+
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (customer_id)
+                            REFERENCES customers(customer_id)
+                            ON DELETE RESTRICT,
+
+                        FOREIGN KEY (cashier_user_id)
+                            REFERENCES users(user_id)
+                            ON DELETE SET NULL,
+
+                        CHECK (discount_amount <= subtotal)
+                    );
+
+
+                    -- ==================================
+                    -- SALE ITEMS
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS sale_items (
+
+                        sale_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        sale_id INTEGER NOT NULL,
+                        variant_id INTEGER NOT NULL,
+
+                        product_name TEXT NOT NULL,
+                        sku TEXT NOT NULL,
+
+                        quantity INTEGER NOT NULL
+                            CHECK (quantity > 0),
+
+                        unit_cost INTEGER NOT NULL
+                            CHECK (unit_cost >= 0),
+
+                        unit_price INTEGER NOT NULL
+                            CHECK (unit_price >= 0),
+
+                        discount_amount INTEGER NOT NULL DEFAULT 0
+                            CHECK (discount_amount >= 0),
+
+                        line_total INTEGER NOT NULL
+                            CHECK (
+                                line_total = (quantity * unit_price) - discount_amount
+                            ),
+
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (sale_id)
+                            REFERENCES sales(sale_id)
+                            ON DELETE RESTRICT,
+
+                        FOREIGN KEY (variant_id)
+                            REFERENCES product_variants(variant_id)
+                            ON DELETE RESTRICT,
+
+                        CHECK (discount_amount <= quantity * unit_price)
+                    );
+
+
+                    -- ==================================
+                    -- PAYMENTS
+                    -- ==================================
+
+                    CREATE TABLE IF NOT EXISTS payments (
+
+                        payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        sale_id INTEGER NOT NULL,
+
+                        payment_method TEXT NOT NULL
+                            CHECK (
+                                payment_method IN (
+                                    'CASH',
+                                    'CARD',
+                                    'MOBILE',
+                                    'BANK_TRANSFER',
+                                    'OTHER'
+                                )
+                            ),
+
+                        amount INTEGER NOT NULL
+                            CHECK (amount > 0),
+
+                        payment_status TEXT NOT NULL DEFAULT 'COMPLETED'
+                            CHECK (
+                                payment_status IN (
+                                    'COMPLETED',
+                                    'FAILED',
+                                    'REFUNDED'
+                                )
+                            ),
+
+                        reference_number TEXT,
+                        notes TEXT,
+
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (sale_id)
+                            REFERENCES sales(sale_id)
+                            ON DELETE RESTRICT
+                    );
+
 
                     -- ==================================
                     -- INDEXES
@@ -435,6 +597,30 @@ class Database:
 
                     CREATE INDEX IF NOT EXISTS idx_inventory_transactions_type
                     ON inventory_transactions(transaction_type);
+
+                    CREATE INDEX IF NOT EXISTS idx_sales_customer
+                    ON sales(customer_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_sales_cashier
+                    ON sales(cashier_user_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_sales_created_at
+                    ON sales(created_at);
+
+                    CREATE INDEX IF NOT EXISTS idx_sales_status
+                    ON sales(sale_status);
+
+                    CREATE INDEX IF NOT EXISTS idx_sale_items_sale
+                    ON sale_items(sale_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_sale_items_variant
+                    ON sale_items(variant_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_payments_sale
+                    ON payments(sale_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_payments_method
+                    ON payments(payment_method);
 
                 """)
 
