@@ -12,6 +12,11 @@ from src.models.customer import Customer
 from src.models.sale import Sale
 from src.models.sale_item import SaleItem
 from src.models.payment import Payment
+from src.models.refund import Refund
+from src.models.sales_return import SalesReturn
+from src.models.sales_return_item import SalesReturnItem
+
+
 
 __all__ = [
     "User",
@@ -27,4 +32,5 @@ __all__ = [
     "Sale",
     "SaleItem",
     "Payment",
+    "Refund"
 ]

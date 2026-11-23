@@ -579,3 +579,142 @@ class SaleService:
                 details["payment_summary"]["is_fully_paid"]
             )
         }
+
+    # ==========================================
+    # VOID SALE
+    # ==========================================
+
+    def void_sale(self, sale_id: int, notes: str | None = None) -> bool:
+        """
+        Void an unpaid completed sale and restore its stock.
+
+        Sale status, inventory balances, and inventory history
+        are updated atomically.
+
+        Sales with completed payments must be refunded first.
+        """
+
+        self._validate_positive_integer(sale_id, "Sale ID")
+
+        try:
+            with self.database.transaction() as connection:
+
+                sale = connection.execute(
+                    """
+                    SELECT sale_id, sale_number, sale_status
+                    FROM sales
+                    WHERE sale_id = ?
+                    """,
+                    (sale_id,)
+                ).fetchone()
+
+                if sale is None:
+                    raise ValueError("Sale does not exist.")
+
+                if sale["sale_status"] != "COMPLETED":
+                    raise ValueError(
+                        "Only completed sales can be voided."
+                    )
+
+                payment_row = connection.execute(
+                    """
+                    SELECT COALESCE(SUM(amount), 0) AS paid_amount
+                    FROM payments
+                    WHERE sale_id = ?
+                      AND payment_status = 'COMPLETED'
+                    """,
+                    (sale_id,)
+                ).fetchone()
+
+                if int(payment_row["paid_amount"]) > 0:
+                    raise ValueError(
+                        "This sale has completed payments. "
+                        "Process a refund before voiding it."
+                    )
+
+                items = connection.execute(
+                    """
+                    SELECT variant_id, sku, quantity
+                    FROM sale_items
+                    WHERE sale_id = ?
+                    ORDER BY sale_item_id
+                    """,
+                    (sale_id,)
+                ).fetchall()
+
+                if not items:
+                    raise ValueError(
+                        "Cannot void a sale without sale items."
+                    )
+
+                for item in items:
+
+                    variant_id = item["variant_id"]
+                    quantity = item["quantity"]
+
+                    cursor = connection.execute(
+                        """
+                        UPDATE inventory
+                        SET quantity_on_hand = quantity_on_hand + ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE variant_id = ?
+                        """,
+                        (quantity, variant_id)
+                    )
+
+                    if cursor.rowcount == 0:
+                        raise ValueError(
+                            f"Inventory record not found for SKU "
+                            f"{item['sku']}."
+                        )
+
+                    stock_row = connection.execute(
+                        """
+                        SELECT quantity_on_hand
+                        FROM inventory
+                        WHERE variant_id = ?
+                        """,
+                        (variant_id,)
+                    ).fetchone()
+
+                    quantity_after = int(
+                        stock_row["quantity_on_hand"]
+                    )
+
+                    movement = InventoryTransaction(
+                        variant_id=variant_id,
+                        transaction_type="ADJUSTMENT_IN",
+                        quantity_change=quantity,
+                        quantity_after=quantity_after,
+                        reference_type="SALE_VOID",
+                        reference_id=sale_id,
+                        notes=(
+                            notes
+                            or f"Stock restored for voided sale "
+                               f"{sale['sale_number']} "
+                               f"(SKU: {item['sku']})"
+                        )
+                    )
+
+                    self.transaction_repository.create(
+                        movement,
+                        connection=connection
+                    )
+
+                updated = self.sale_repository.update_status(
+                    sale_id,
+                    "VOIDED",
+                    connection=connection
+                )
+
+                if not updated:
+                    raise ValueError(
+                        "Unable to update the sale status."
+                    )
+
+                return True
+
+        except sqlite3.IntegrityError as error:
+            raise ValueError(
+                f"Unable to void sale: {error}"
+            ) from error

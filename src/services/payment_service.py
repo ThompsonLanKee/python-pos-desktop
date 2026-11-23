@@ -119,10 +119,7 @@ class PaymentService:
 
     def get_payment_summary(self, sale_id: int) -> dict:
         """
-        Return payment totals and outstanding balance.
-
-        Failed and refunded payments are excluded from
-        the completed payment total.
+        Return gross payment totals, refunds, and outstanding balance.
         """
 
         if not isinstance(sale_id, int) or isinstance(sale_id, bool):
@@ -160,7 +157,7 @@ class PaymentService:
                                 ELSE 0
                             END
                         ), 0
-                    ) AS completed_amount,
+                    ) AS gross_paid_amount,
 
                     COALESCE(
                         SUM(
@@ -170,17 +167,7 @@ class PaymentService:
                                 ELSE 0
                             END
                         ), 0
-                    ) AS failed_amount,
-
-                    COALESCE(
-                        SUM(
-                            CASE
-                                WHEN payment_status = 'REFUNDED'
-                                THEN amount
-                                ELSE 0
-                            END
-                        ), 0
-                    ) AS refunded_amount
+                    ) AS failed_amount
 
                 FROM payments
                 WHERE sale_id = ?
@@ -188,19 +175,38 @@ class PaymentService:
                 (sale_id,)
             ).fetchone()
 
+            refund_row = connection.execute(
+                """
+                SELECT COALESCE(SUM(amount), 0) AS refunded_amount
+                FROM refunds
+                WHERE sale_id = ?
+                """,
+                (sale_id,)
+            ).fetchone()
+
             total_amount = int(sale["total_amount"])
-            paid_amount = int(payment_totals["completed_amount"])
+            gross_paid_amount = int(
+                payment_totals["gross_paid_amount"]
+            )
+            refunded_amount = int(refund_row["refunded_amount"])
+
+            paid_amount = gross_paid_amount - refunded_amount
 
             return {
                 "sale_id": sale["sale_id"],
                 "sale_number": sale["sale_number"],
                 "sale_status": sale["sale_status"],
                 "total_amount": total_amount,
+                "gross_paid_amount": gross_paid_amount,
                 "paid_amount": paid_amount,
-                "outstanding_balance": total_amount - paid_amount,
+                "outstanding_balance": total_amount - gross_paid_amount,
                 "failed_amount": int(payment_totals["failed_amount"]),
-                "refunded_amount": int(payment_totals["refunded_amount"]),
-                "is_fully_paid": paid_amount == total_amount,
+                "refunded_amount": refunded_amount,
+                "net_paid_amount": paid_amount,
+                "is_fully_paid": (
+                    paid_amount == total_amount
+                    and sale["sale_status"] != "REFUNDED"
+                ),
                 "is_partially_paid": 0 < paid_amount < total_amount,
                 "is_unpaid": paid_amount == 0,
             }

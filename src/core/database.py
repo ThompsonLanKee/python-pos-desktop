@@ -566,6 +566,30 @@ class Database:
                             ON DELETE RESTRICT
                     );
 
+                    CREATE TABLE IF NOT EXISTS refunds (
+
+                        refund_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                        payment_id INTEGER NOT NULL,
+                        sale_id INTEGER NOT NULL,
+
+                        amount INTEGER NOT NULL
+                            CHECK (amount > 0),
+
+                        reference_number TEXT,
+                        notes TEXT,
+
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (payment_id)
+                            REFERENCES payments(payment_id)
+                            ON DELETE RESTRICT,
+
+                        FOREIGN KEY (sale_id)
+                            REFERENCES sales(sale_id)
+                            ON DELETE RESTRICT
+                    );
+
 
                     -- ==================================
                     -- INDEXES
@@ -621,6 +645,12 @@ class Database:
 
                     CREATE INDEX IF NOT EXISTS idx_payments_method
                     ON payments(payment_method);
+
+                    CREATE INDEX IF NOT EXISTS idx_refunds_payment_id
+                    ON refunds(payment_id);
+
+                    CREATE INDEX IF NOT EXISTS idx_refunds_sale_id
+                    ON refunds(sale_id);
 
                 """)
 
