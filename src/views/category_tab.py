@@ -38,7 +38,70 @@ class CategoryDialog(QDialog):
         self.setWindowTitle(
             "Edit Category" if category else "Add Category"
         )
-        self.setMinimumWidth(430)
+        self.setMinimumWidth(480)
+        self.setAutoFillBackground(True)
+
+        self.setStyleSheet("""
+            QDialog, QDialog QWidget {
+                background-color: #F5F8F6;
+                color: #203D2E;
+            }
+
+            QDialog QLabel {
+                color: #203D2E;
+                background-color: transparent;
+                font-size: 13px;
+            }
+
+            QDialog QLineEdit,
+            QDialog QTextEdit,
+            QDialog QComboBox {
+                background-color: #FFFFFF;
+                color: #203D2E;
+                border: 1px solid #C8D8CD;
+                border-radius: 7px;
+                padding: 9px;
+                selection-background-color: #B9DCC5;
+                selection-color: #203D2E;
+            }
+
+            QDialog QLineEdit:focus,
+            QDialog QTextEdit:focus,
+            QDialog QComboBox:focus {
+                border: 2px solid #43845A;
+            }
+
+            QDialog QComboBox QAbstractItemView {
+                background-color: #FFFFFF;
+                color: #203D2E;
+                selection-background-color: #D6EBDD;
+                selection-color: #203D2E;
+            }
+
+            QDialog QPushButton {
+                background-color: #E6EEE8;
+                color: #203D2E;
+                border: 1px solid #C8D8CD;
+                border-radius: 7px;
+                padding: 9px 16px;
+                min-width: 65px;
+            }
+
+            QDialog QPushButton:hover {
+                background-color: #D6EBDD;
+            }
+
+            QDialog QPushButton#primary_button {
+                background-color: #315D40;
+                color: #FFFFFF;
+                border: none;
+                font-weight: 600;
+            }
+
+            QDialog QPushButton#primary_button:hover {
+                background-color: #43845A;
+            }
+        """)
 
         self._build_ui()
 
@@ -129,6 +192,16 @@ class CategoryTab(QWidget):
         self.categories = []
 
         self.setStyleSheet("""
+            QWidget {
+                background-color: #F5F8F6;
+                color: #203D2E;
+            }
+
+            QLabel {
+                color: #203D2E;
+                background-color: transparent;
+            }
+
             QLineEdit, QComboBox, QTextEdit, QTableWidget {
                 background-color: #FFFFFF;
                 color: #26352C;
@@ -143,8 +216,18 @@ class CategoryTab(QWidget):
             QTableWidget {
                 alternate-background-color: #F5F8F6;
                 gridline-color: #E5EAE6;
-                selection-background-color: #D6EBDD;
+                selection-background-color: #C7E4D0;
                 selection-color: #203D2E;
+            }
+
+            QTableWidget::item:selected {
+                background-color: #C7E4D0;
+                color: #203D2E;
+            }
+
+            QTableWidget::item:hover {
+                background-color: #E4F0E7;
+                color: #203D2E;
             }
 
             QHeaderView::section {
@@ -291,6 +374,58 @@ class CategoryTab(QWidget):
         self._update_buttons()
 
     # ==========================================
+    # MESSAGE BOXES
+    # ==========================================
+
+    def _style_message_box(self, box):
+        box.setStyleSheet("""
+            QMessageBox {
+                background-color: #F5F8F6;
+            }
+
+            QMessageBox QLabel {
+                color: #203D2E;
+                background-color: transparent;
+                min-width: 280px;
+                font-size: 13px;
+            }
+
+            QMessageBox QPushButton {
+                background-color: #315D40;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 18px;
+                min-width: 70px;
+            }
+
+            QMessageBox QPushButton:hover {
+                background-color: #43845A;
+            }
+        """)
+
+    def _show_message(self, title, message, icon=QMessageBox.Icon.Information):
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setText(message)
+        box.setIcon(icon)
+        self._style_message_box(box)
+        box.exec()
+
+    def _confirm_action(self, title, message):
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setText(message)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        self._style_message_box(box)
+        return box.exec() == QMessageBox.StandardButton.Yes
+
+    # ==========================================
     # LOAD AND DISPLAY
     # ==========================================
 
@@ -308,10 +443,10 @@ class CategoryTab(QWidget):
             )
 
         except Exception as exc:
-            QMessageBox.critical(
-                self,
+            self._show_message(
                 "Category Load Error",
-                f"Could not load categories:\n{exc}"
+                f"Could not load categories:\n{exc}",
+                QMessageBox.Icon.Critical
             )
 
     def _display_categories(
@@ -448,17 +583,16 @@ class CategoryTab(QWidget):
             self.load_categories()
             self._select_category(category_id)
 
-            QMessageBox.information(
-                self,
+            self._show_message(
                 "Category Created",
                 "Category created successfully."
             )
 
         except Exception as exc:
-            QMessageBox.warning(
-                self,
+            self._show_message(
                 "Unable to Create Category",
-                str(exc)
+                str(exc),
+                QMessageBox.Icon.Warning
             )
 
     # ==========================================
@@ -492,10 +626,10 @@ class CategoryTab(QWidget):
             self._select_category(category["category_id"])
 
         except Exception as exc:
-            QMessageBox.warning(
-                self,
+            self._show_message(
                 "Unable to Update Category",
-                str(exc)
+                str(exc),
+                QMessageBox.Icon.Warning
             )
 
     # ==========================================
@@ -512,17 +646,13 @@ class CategoryTab(QWidget):
 
         action = "activate" if new_status else "deactivate"
 
-        confirmation = QMessageBox.question(
-            self,
+        confirmed = self._confirm_action(
             "Confirm Category Status",
             f"Are you sure you want to {action} "
-            f"'{category['category_name']}'?",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            f"'{category['category_name']}'?"
         )
 
-        if confirmation != QMessageBox.StandardButton.Yes:
+        if not confirmed:
             return
 
         try:
@@ -535,10 +665,10 @@ class CategoryTab(QWidget):
             self._select_category(category["category_id"])
 
         except Exception as exc:
-            QMessageBox.warning(
-                self,
+            self._show_message(
                 "Unable to Change Category Status",
-                str(exc)
+                str(exc),
+                QMessageBox.Icon.Warning
             )
 
     def _select_category(self, category_id):

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
-    QTabWidget
+    QTabWidget,
 )
 from src.views.category_tab import CategoryTab
 
@@ -359,12 +359,57 @@ class ProductManagementView(QWidget):
         super().__init__(parent)
 
         self.product_service = product_service
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #F5F8F6;
+                color: #203D2E;
+            }
+        """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
+        self.tabs.setStyleSheet("""
+            QTabWidget {
+                background-color: #F5F8F6;
+                color: #203D2E;
+            }
+
+            QTabWidget::pane {
+                background-color: #F5F8F6;
+                border: 1px solid #DCE5DE;
+                border-top: none;
+            }
+
+            QTabBar {
+                background-color: #F5F8F6;
+            }
+
+            QTabBar::tab {
+                background-color: #E8EFEA;
+                color: #203D2E;
+                padding: 11px 24px;
+                margin-right: 3px;
+                border: 1px solid #D5E1D8;
+                border-bottom: none;
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
+                font-weight: 600;
+            }
+
+            QTabBar::tab:selected {
+                background-color: #315D40;
+                color: #FFFFFF;
+                border-color: #315D40;
+            }
+
+            QTabBar::tab:hover:!selected {
+                background-color: #D6EBDD;
+                color: #203D2E;
+            }
+        """)
 
         # Categories tab
         self.category_tab = CategoryTab(
