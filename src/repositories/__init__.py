@@ -10,6 +10,8 @@ from src.repositories.inventory_repository import InventoryRepository
 from src.repositories.customer_repository import CustomerRepository
 from src.repositories.inventory_transaction_repository import InventoryTransactionRepository
 from src.repositories.sale_repository import SaleRepository
+from src.repositories.sale_item_repository import SaleItemRepository
+from src.repositories.payment_repository import PaymentRepository
 
 __all__ = [
     "UserRepository",
@@ -22,6 +24,8 @@ __all__ = [
     "ProductVariantRepository",
     "InventoryRepository",
     "CustomerRepository",
-    "InventoryTransactionRepository"
+    "InventoryTransactionRepository",
     "SaleRepository",
+    "SaleItemRepository",
+    "PaymentRepository"
 ]
