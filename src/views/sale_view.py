@@ -1,5 +1,7 @@
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QImageReader, QPixmap
+
 from PySide6.QtWidgets import (
     QWidget,
     QFrame,
@@ -12,7 +14,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QGridLayout,
     QHeaderView,
+    QAbstractItemView,
     QMessageBox,
+    QScrollArea,
 )
 
 
@@ -22,11 +26,19 @@ class SaleView(QWidget):
     checkout_requested = Signal()
     product_search_requested = Signal(str)
 
-    def __init__(self, sale_service=None, parent=None):
+    def __init__(
+        self,
+        sale_service=None,
+        product_service=None,
+        parent=None
+    ):
         super().__init__(parent)
 
         self.sale_service = sale_service
+        self.product_service = product_service
+
         self.cart_items = []
+        self._product_results = []
 
         self._build_ui()
         self._apply_styles()
@@ -38,13 +50,14 @@ class SaleView(QWidget):
     def _build_ui(self):
 
         main_layout = QHBoxLayout(self)
+
         main_layout.setContentsMargins(0, 10, 0, 0)
         main_layout.setSpacing(18)
 
-        # Left: Product selection
+        # Product selection panel
         product_panel = self._build_product_panel()
 
-        # Right: Shopping cart
+        # Shopping cart panel
         cart_panel = self._build_cart_panel()
 
         main_layout.addWidget(product_panel, 3)
@@ -57,6 +70,7 @@ class SaleView(QWidget):
     def _build_product_panel(self):
 
         panel = QWidget()
+
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
@@ -64,51 +78,43 @@ class SaleView(QWidget):
         heading = QLabel("Products")
         heading.setObjectName("section_title")
 
+        # Product search
         self.search_input = QLineEdit()
+
         self.search_input.setPlaceholderText(
             "Search by product name, SKU or barcode..."
         )
+
         self.search_input.setMinimumHeight(42)
 
         self.search_input.returnPressed.connect(
             self._search_products
         )
 
-        self.product_table = QTableWidget(0, 5)
-        self.product_table.setHorizontalHeaderLabels([
-            "Product",
-            "SKU",
-            "Variant",
-            "Price",
-            "Stock",
-        ])
+        self.product_cards_scroll = QScrollArea()
+        self.product_cards_scroll.setObjectName("product_cards_scroll")
+        self.product_cards_scroll.setWidgetResizable(True)
+        self.product_cards_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
-        self.product_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
+        self.product_cards_container = QWidget()
+        self.product_grid_layout = QGridLayout(
+            self.product_cards_container
         )
+        self.product_grid_layout.setContentsMargins(2, 2, 2, 2)
+        self.product_grid_layout.setHorizontalSpacing(12)
+        self.product_grid_layout.setVerticalSpacing(12)
 
-        self.product_table.setSelectionBehavior(
-            QTableWidget.SelectionBehavior.SelectRows
-        )
-
-        self.product_table.setEditTriggers(
-            QTableWidget.EditTrigger.NoEditTriggers
-        )
-
-        self.product_table.setAlternatingRowColors(True)
-
-        self.add_button = QPushButton("Add to Cart")
-        self.add_button.setObjectName("primary_button")
-        self.add_button.setMinimumHeight(42)
-
-        self.add_button.clicked.connect(
-            self._add_selected_product
+        self.product_cards_scroll.setWidget(
+            self.product_cards_container
         )
 
         layout.addWidget(heading)
         layout.addWidget(self.search_input)
-        layout.addWidget(self.product_table)
-        layout.addWidget(self.add_button)
+        layout.addWidget(self.product_cards_scroll, 1)
+
+        self._show_product_card_message(
+            "Search for a product to see available items."
+        )
 
         return panel
 
@@ -122,13 +128,16 @@ class SaleView(QWidget):
         panel.setObjectName("cart_panel")
 
         layout = QVBoxLayout(panel)
+
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 
         heading = QLabel("Current Sale")
         heading.setObjectName("section_title")
 
+        # Cart table
         self.cart_table = QTableWidget(0, 4)
+
         self.cart_table.setHorizontalHeaderLabels([
             "Item",
             "Qty",
@@ -136,19 +145,44 @@ class SaleView(QWidget):
             "Total",
         ])
 
-        self.cart_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
+        cart_header = self.cart_table.horizontalHeader()
+        cart_header.setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )
+        cart_header.setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        cart_header.setSectionResizeMode(
+            2, QHeaderView.ResizeMode.ResizeToContents
+        )
+        cart_header.setSectionResizeMode(
+            3, QHeaderView.ResizeMode.ResizeToContents
         )
 
         self.cart_table.setSelectionBehavior(
-            QTableWidget.SelectionBehavior.SelectRows
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+
+        self.cart_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
         )
 
         self.cart_table.setEditTriggers(
-            QTableWidget.EditTrigger.NoEditTriggers
+            QAbstractItemView.EditTrigger.NoEditTriggers
         )
 
-        # Cart actions
+        self.cart_table.setAlternatingRowColors(True)
+        self.cart_table.setShowGrid(False)
+        self.cart_table.setWordWrap(False)
+
+        self.cart_table.verticalHeader().setVisible(False)
+        self.cart_table.verticalHeader().setDefaultSectionSize(48)
+
+        self.cart_table.itemSelectionChanged.connect(
+            self._update_cart_action_buttons
+        )
+
+        # Cart action buttons
         action_layout = QHBoxLayout()
 
         self.remove_button = QPushButton("Remove Item")
@@ -165,8 +199,9 @@ class SaleView(QWidget):
         action_layout.addWidget(self.remove_button)
         action_layout.addWidget(self.clear_button)
 
-        # Summary
+        # Sale summary
         summary = QFrame()
+
         summary_layout = QGridLayout(summary)
 
         self.subtotal_label = QLabel("0 MMK")
@@ -176,22 +211,43 @@ class SaleView(QWidget):
         self.total_label = QLabel("0 MMK")
         self.total_label.setObjectName("total_value")
 
-        summary_layout.addWidget(QLabel("Subtotal"), 0, 0)
-        summary_layout.addWidget(self.subtotal_label, 0, 1)
+        summary_layout.addWidget(
+            QLabel("Subtotal"), 0, 0
+        )
 
-        summary_layout.addWidget(QLabel("Discount"), 1, 0)
-        summary_layout.addWidget(self.discount_label, 1, 1)
+        summary_layout.addWidget(
+            self.subtotal_label, 0, 1
+        )
 
-        summary_layout.addWidget(QLabel("Tax"), 2, 0)
-        summary_layout.addWidget(self.tax_label, 2, 1)
+        summary_layout.addWidget(
+            QLabel("Discount"), 1, 0
+        )
 
-        summary_layout.addWidget(QLabel("Total"), 3, 0)
-        summary_layout.addWidget(self.total_label, 3, 1)
+        summary_layout.addWidget(
+            self.discount_label, 1, 1
+        )
 
-        # Checkout
+        summary_layout.addWidget(
+            QLabel("Tax"), 2, 0
+        )
+
+        summary_layout.addWidget(
+            self.tax_label, 2, 1
+        )
+
+        summary_layout.addWidget(
+            QLabel("Total"), 3, 0
+        )
+
+        summary_layout.addWidget(
+            self.total_label, 3, 1
+        )
+
+        # Checkout button
         self.checkout_button = QPushButton(
             "Proceed to Checkout"
         )
+
         self.checkout_button.setObjectName("primary_button")
         self.checkout_button.setMinimumHeight(48)
 
@@ -199,13 +255,30 @@ class SaleView(QWidget):
             self.checkout_requested.emit
         )
 
+        # Add widgets
         layout.addWidget(heading)
         layout.addWidget(self.cart_table)
         layout.addLayout(action_layout)
         layout.addWidget(summary)
         layout.addWidget(self.checkout_button)
 
+        self._update_cart_action_buttons()
+
         return panel
+
+    # ==========================================
+    # CART BUTTON STATES
+    # ==========================================
+
+    def _update_cart_action_buttons(self):
+
+        has_selection = self.cart_table.currentRow() >= 0
+
+        self.remove_button.setEnabled(has_selection)
+
+        self.clear_button.setEnabled(
+            bool(self.cart_items)
+        )
 
     # ==========================================
     # PRODUCT SEARCH
@@ -216,32 +289,302 @@ class SaleView(QWidget):
         keyword = self.search_input.text().strip()
 
         if not keyword:
-            return
-
-        self.product_search_requested.emit(keyword)
-
-    # ==========================================
-    # CART OPERATIONS
-    # ==========================================
-
-    def _add_selected_product(self):
-
-        row = self.product_table.currentRow()
-
-        if row < 0:
-            QMessageBox.warning(
-                self,
-                "No Product Selected",
-                "Please select a product first."
+            self._product_results = []
+            self._show_product_card_message(
+                "Search for a product to see available items."
             )
             return
 
-        QMessageBox.information(
-            self,
-            "Product Selection",
-            "Product selection will be connected "
-            "to the inventory service next."
+        if self.product_service is None:
+
+            QMessageBox.warning(
+                self,
+                "Configuration Error",
+                "Product service is not connected."
+            )
+
+            return
+
+        try:
+
+            products = self.product_service.search_pos_variants(
+                keyword
+            )
+            self._product_results = products
+            self._render_product_cards(products)
+
+        except Exception as exc:
+
+            QMessageBox.critical(
+                self,
+                "Product Search Error",
+                str(exc)
+            )
+
+    def _clear_product_cards(self):
+        while self.product_grid_layout.count():
+            layout_item = self.product_grid_layout.takeAt(0)
+            widget = layout_item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _show_product_card_message(self, text):
+        self._clear_product_cards()
+        message = QLabel(text)
+        message.setObjectName("empty_products_label")
+        message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.product_grid_layout.addWidget(message, 0, 0, 1, 2)
+
+    @staticmethod
+    def _variant_description(product):
+        return " / ".join(
+            value
+            for value in (
+                product.get("color_name"),
+                product.get("size_name")
+            )
+            if value
+        ) or "Default"
+
+    def _create_product_card(self, product):
+        card = QFrame()
+        card.setObjectName("product_card")
+        card.setMinimumWidth(220)
+
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(8)
+
+        image_label = QLabel("No photo")
+        image_label.setObjectName("product_photo")
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_label.setFixedHeight(132)
+        image_label.setMinimumWidth(190)
+
+        image_path = self.product_service.resolve_product_image_path(
+            product.get("image_path")
         )
+        if image_path is not None and image_path.is_file():
+            reader = QImageReader(str(image_path))
+            if reader.canRead():
+                image_size = reader.size()
+                if image_size.isValid():
+                    reader.setScaledSize(
+                        image_size.scaled(
+                            QSize(320, 132),
+                            Qt.AspectRatioMode.KeepAspectRatio
+                        )
+                    )
+
+                pixmap = QPixmap.fromImage(reader.read())
+                if not pixmap.isNull():
+                    image_label.setText("")
+                    image_label.setPixmap(pixmap)
+
+        name_label = QLabel(product["product_name"])
+        name_label.setObjectName("product_name")
+        name_label.setWordWrap(True)
+
+        variant_label = QLabel(
+            f'{product["sku"] or "No SKU"} | '
+            f'{self._variant_description(product)}'
+        )
+        variant_label.setObjectName("product_details")
+        variant_label.setWordWrap(True)
+
+        price_stock_layout = QHBoxLayout()
+        price_label = QLabel(
+            f'{int(product["selling_price"]):,} MMK'
+        )
+        price_label.setObjectName("product_price")
+        stock = int(product["quantity_on_hand"])
+        stock_label = QLabel(
+            "Out of stock" if stock <= 0 else f"{stock} in stock"
+        )
+        stock_label.setObjectName(
+            "out_of_stock" if stock <= 0 else "stock_label"
+        )
+        price_stock_layout.addWidget(price_label)
+        price_stock_layout.addStretch()
+        price_stock_layout.addWidget(stock_label)
+
+        add_button = QPushButton(
+            "Out of stock" if stock <= 0 else "Add to Cart"
+        )
+        add_button.setObjectName("primary_button")
+        add_button.setMinimumHeight(36)
+        add_button.setEnabled(stock > 0)
+        add_button.clicked.connect(
+            lambda _checked=False, product_data=product:
+                self._add_product_to_cart(product_data)
+        )
+
+        card_layout.addWidget(image_label)
+        card_layout.addWidget(name_label)
+        card_layout.addWidget(variant_label)
+        card_layout.addLayout(price_stock_layout)
+        card_layout.addWidget(add_button)
+        return card
+
+    def _render_product_cards(self, products):
+        self._clear_product_cards()
+
+        if not products:
+            self._show_product_card_message(
+                "No matching products found."
+            )
+            return
+
+        for index, product in enumerate(products):
+            row, column = divmod(index, 2)
+            column_span = 2 if len(products) == 1 else 1
+            self.product_grid_layout.addWidget(
+                self._create_product_card(product),
+                row,
+                column,
+                1,
+                column_span
+            )
+
+    # ==========================================
+    # ADD PRODUCT TO CART
+    # ==========================================
+
+    def _add_product_to_cart(self, product):
+        variant_id = product["variant_id"]
+        product_name = product["product_name"]
+        sku = product["sku"] or ""
+        variant_name = self._variant_description(product)
+        price = int(product["selling_price"])
+        stock = int(product["quantity_on_hand"])
+
+        if stock <= 0:
+
+            QMessageBox.warning(
+                self,
+                "Out of stock",
+                f"{product_name} ({sku}) is currently out of stock.\n"
+                "Check inventory before adding it to this sale."
+            )
+
+            return
+
+        # Check whether the variant already exists in cart
+        existing_item = next(
+            (
+                item
+                for item in self.cart_items
+                if item["variant_id"] == variant_id
+            ),
+            None
+        )
+
+        if existing_item:
+
+            if existing_item["quantity"] >= stock:
+
+                QMessageBox.warning(
+                    self,
+                    "Stock limit reached",
+                    f"Only {stock} unit(s) of {product_name} "
+                    "are available."
+                )
+
+                return
+
+            existing_item["quantity"] += 1
+
+            existing_item["total"] = (
+                existing_item["quantity"]
+                * existing_item["price"]
+            )
+
+        else:
+
+            self.cart_items.append({
+                "variant_id": variant_id,
+                "name": product_name,
+                "sku": sku,
+                "variant": variant_name,
+                "price": price,
+                "quantity": 1,
+                "stock": stock,
+                "image_path": product.get("image_path"),
+                "total": price
+            })
+
+        self._refresh_cart()
+
+    # ==========================================
+    # INCREASE QUANTITY
+    # ==========================================
+
+    def _increase_selected_quantity(self):
+
+        row = self.cart_table.currentRow()
+
+        if row < 0 or row >= len(self.cart_items):
+            return
+
+        self._change_cart_quantity(
+            self.cart_items[row]["variant_id"],
+            1
+        )
+
+    def _decrease_selected_quantity(self):
+
+        row = self.cart_table.currentRow()
+
+        if row < 0 or row >= len(self.cart_items):
+            return
+
+        self._change_cart_quantity(
+            self.cart_items[row]["variant_id"],
+            -1
+        )
+
+    def _change_cart_quantity(self, variant_id, amount):
+
+        item = next(
+            (
+                cart_item for cart_item in self.cart_items
+                if cart_item["variant_id"] == variant_id
+            ),
+            None
+        )
+
+        if item is None:
+            return
+
+        if amount > 0 and item["quantity"] >= item["stock"]:
+            QMessageBox.warning(
+                self,
+                "Stock limit reached",
+                f"Only {item['stock']} unit(s) of "
+                f"{item['name']} are available."
+            )
+            return
+
+        if amount < 0 and item["quantity"] <= 1:
+            return
+
+        item["quantity"] += amount
+        item["total"] = item["quantity"] * item["price"]
+
+        self._refresh_cart()
+        row = next(
+            (
+                index for index, cart_item in enumerate(self.cart_items)
+                if cart_item["variant_id"] == variant_id
+            ),
+            -1
+        )
+        if row >= 0:
+            self.cart_table.selectRow(row)
+
+    # ==========================================
+    # REMOVE CART ITEM
+    # ==========================================
 
     def _remove_selected_item(self):
 
@@ -251,53 +594,118 @@ class SaleView(QWidget):
             return
 
         if row < len(self.cart_items):
+
             self.cart_items.pop(row)
 
         self._refresh_cart()
 
+    # ==========================================
+    # CLEAR CART
+    # ==========================================
+
     def _clear_cart(self):
 
         self.cart_items.clear()
+
         self._refresh_cart()
 
     # ==========================================
-    # CART DISPLAY
+    # REFRESH CART DISPLAY
     # ==========================================
 
     def _refresh_cart(self):
 
-        self.cart_table.setRowCount(len(self.cart_items))
+        self.cart_table.setRowCount(
+            len(self.cart_items)
+        )
 
         for row, item in enumerate(self.cart_items):
 
-            self.cart_table.setItem(
-                row, 0,
-                QTableWidgetItem(item["name"])
+            display_name = (
+                f'{item["name"]} '
+                f'({item["sku"]}) - {item["variant"]}'
             )
 
-            self.cart_table.setItem(
-                row, 1,
-                QTableWidgetItem(str(item["quantity"]))
-            )
+            values = [
+                display_name,
+                f'{item["price"]:,}',
+                f'{item["total"]:,}'
+            ]
 
             self.cart_table.setItem(
-                row, 2,
-                QTableWidgetItem(f'{item["price"]:,}')
+                row,
+                0,
+                QTableWidgetItem(values[0])
             )
 
-            self.cart_table.setItem(
-                row, 3,
-                QTableWidgetItem(f'{item["total"]:,}')
+            quantity_widget = QWidget()
+            quantity_layout = QHBoxLayout(quantity_widget)
+            quantity_layout.setContentsMargins(2, 2, 2, 2)
+            quantity_layout.setSpacing(4)
+
+            decrease_button = QPushButton("-")
+            decrease_button.setObjectName("quantity_button")
+            decrease_button.setFixedSize(28, 28)
+            decrease_button.setToolTip("Decrease quantity")
+            decrease_button.setEnabled(item["quantity"] > 1)
+            decrease_button.clicked.connect(
+                lambda _checked=False, current_variant_id=item["variant_id"]:
+                    self._change_cart_quantity(current_variant_id, -1)
             )
 
+            quantity_label = QLabel(str(item["quantity"]))
+            quantity_label.setObjectName("quantity_value")
+            quantity_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            quantity_label.setMinimumWidth(24)
+
+            increase_button = QPushButton("+")
+            increase_button.setObjectName("quantity_button")
+            increase_button.setFixedSize(28, 28)
+            increase_button.setToolTip("Increase quantity")
+            increase_button.setEnabled(
+                item["quantity"] < item["stock"]
+            )
+            increase_button.clicked.connect(
+                lambda _checked=False, current_variant_id=item["variant_id"]:
+                    self._change_cart_quantity(current_variant_id, 1)
+            )
+
+            quantity_layout.addWidget(decrease_button)
+            quantity_layout.addWidget(quantity_label)
+            quantity_layout.addWidget(increase_button)
+            self.cart_table.setCellWidget(row, 1, quantity_widget)
+
+            for column, value in enumerate(values[1:], start=2):
+                self.cart_table.setItem(
+                    row,
+                    column,
+                    QTableWidgetItem(value)
+                )
+
+        # Calculate subtotal
         subtotal = sum(
-            item["total"] for item in self.cart_items
+            item["total"]
+            for item in self.cart_items
         )
 
-        self.subtotal_label.setText(f"{subtotal:,} MMK")
+        # Update summary
+        self.subtotal_label.setText(
+            f"{subtotal:,} MMK"
+        )
+
         self.discount_label.setText("0 MMK")
         self.tax_label.setText("0 MMK")
-        self.total_label.setText(f"{subtotal:,} MMK")
+
+        self.total_label.setText(
+            f"{subtotal:,} MMK"
+        )
+
+        # Update button states
+        self.checkout_button.setEnabled(
+            bool(self.cart_items)
+        )
+
+        self._update_cart_action_buttons()
 
     # ==========================================
     # STYLING
@@ -306,25 +714,98 @@ class SaleView(QWidget):
     def _apply_styles(self):
 
         self.setStyleSheet("""
+
             QLineEdit {
                 background-color: white;
                 border: 1px solid #DCE5DE;
                 border-radius: 7px;
                 padding: 10px;
+                color: #263B30;
+            }
+
+            QLineEdit:focus {
+                border: 1px solid #315D40;
+            }
+
+            QScrollArea#product_cards_scroll {
+                background-color: transparent;
+                border: none;
+            }
+
+            QFrame#product_card {
+                background-color: #FFFFFF;
+                border: 1px solid #DCE5DE;
+                border-radius: 9px;
+            }
+
+            QLabel#product_photo {
+                background-color: #F2F6F3;
+                color: #718077;
+                border: 1px solid #E1E8E3;
+                border-radius: 6px;
+            }
+
+            QLabel#product_name {
+                color: #203D2E;
+                font-size: 14px;
+                font-weight: bold;
+            }
+
+            QLabel#product_details {
+                color: #718077;
+                font-size: 11px;
+            }
+
+            QLabel#product_price {
+                color: #203D2E;
+                font-size: 14px;
+                font-weight: bold;
+            }
+
+            QLabel#stock_label {
+                color: #315D40;
+                font-size: 11px;
+            }
+
+            QLabel#out_of_stock {
+                color: #A94442;
+                font-size: 11px;
+                font-weight: bold;
+            }
+
+            QLabel#empty_products_label {
+                color: #718077;
+                padding: 32px;
             }
 
             QTableWidget {
                 background-color: white;
-                border: 1px solid #E5EAE6;
-                border-radius: 7px;
+                alternate-background-color: #F5F8F6;
+                border: 1px solid #DCE5DE;
+                border-radius: 8px;
                 gridline-color: #EDF0ED;
+                color: #263B30;
+                selection-background-color: #DCECE1;
+                selection-color: #203D2E;
+                outline: none;
+            }
+
+            QTableWidget::item {
+                padding: 7px;
+                border-bottom: 1px solid #EDF0ED;
+            }
+
+            QTableWidget::item:selected {
+                background-color: #DCECE1;
+                color: #203D2E;
             }
 
             QHeaderView::section {
                 background-color: #EAF1EC;
                 color: #315D40;
-                padding: 9px;
+                padding: 11px 8px;
                 border: none;
+                border-bottom: 1px solid #DCE5DE;
                 font-weight: bold;
             }
 
@@ -347,14 +828,75 @@ class SaleView(QWidget):
                 background-color: #3F7653;
             }
 
+            #primary_button:disabled {
+                background-color: #AABCAF;
+                color: #F5F5F5;
+            }
+
             #total_value {
                 color: #203D2E;
                 font-size: 20px;
                 font-weight: bold;
             }
 
+            QLabel#quantity_value {
+                color: #203D2E;
+                font-weight: bold;
+            }
+
             QPushButton {
+                background-color: #EAF1EC;
+                color: #315D40;
+                border: 1px solid #DCE5DE;
                 padding: 8px;
                 border-radius: 6px;
             }
+
+            QPushButton:hover {
+                background-color: #DCECE1;
+            }
+
+            QPushButton#quantity_button {
+                background-color: #EAF1EC;
+                color: #315D40;
+                border: 1px solid #B9CDBF;
+                border-radius: 5px;
+                padding: 0;
+                font-size: 16px;
+                font-weight: bold;
+            }
+
+            QPushButton#quantity_button:hover {
+                background-color: #DCECE1;
+            }
+
+            QPushButton:disabled {
+                background-color: #F2F4F2;
+                color: #A0AAA2;
+                border-color: #E5EAE6;
+            }
+
+            QMessageBox {
+                background-color: #F5F7F5;
+                color: #263B30;
+            }
+
+            QMessageBox QLabel {
+                background-color: transparent;
+                color: #263B30;
+            }
+
+            QMessageBox QPushButton {
+                background-color: #EAF1EC;
+                color: #203D2E;
+                border: 1px solid #D0DDD4;
+                border-radius: 6px;
+                min-width: 72px;
+                padding: 7px 12px;
+            }
+
+            QMessageBox QPushButton:hover {
+                background-color: #DCE9DF;
+            }
+
         """)

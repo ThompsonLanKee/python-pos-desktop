@@ -1,9 +1,12 @@
 
 import sqlite3
+import shutil
+from pathlib import Path
 from contextlib import closing
 from typing import Any
+from uuid import uuid4
 
-from src.core.database import Database
+from src.core.database import DATA_DIR, Database
 from src.models import Product, ProductVariant
 from src.repositories import (
     ProductRepository,
@@ -517,3 +520,211 @@ class ProductService:
             product_id,
             is_active
         )
+
+
+    # ==========================================
+    # POS PRODUCT SEARCH
+    # ==========================================
+
+    def search_pos_variants(self, keyword: str) -> list[dict]:
+        """
+        Search active product variants for the POS screen.
+
+        Searches product name, SKU, and barcode.
+        Returns one row per variant with its current stock.
+        """
+
+        if not isinstance(keyword, str):
+            raise TypeError("Search keyword must be a string.")
+
+        keyword = keyword.strip()
+
+        if not keyword:
+            return []
+
+        search_term = f"%{keyword}%"
+
+        query = """
+            SELECT
+                p.product_id,
+                p.product_name,
+                p.image_path,
+                pv.variant_id,
+                pv.sku,
+                pv.barcode,
+                pv.selling_price,
+                col.color_name,
+                sz.size_name,
+                COALESCE(i.quantity_on_hand, 0) AS quantity_on_hand
+
+            FROM product_variants pv
+
+            INNER JOIN products p
+                ON pv.product_id = p.product_id
+
+            LEFT JOIN colors col
+                ON pv.color_id = col.color_id
+
+            LEFT JOIN sizes sz
+                ON pv.size_id = sz.size_id
+
+            LEFT JOIN inventory i
+                ON pv.variant_id = i.variant_id
+
+            WHERE p.is_active = 1
+              AND pv.is_active = 1
+              AND (
+                    p.product_name LIKE ?
+                    OR pv.sku LIKE ?
+                    OR pv.barcode LIKE ?
+              )
+
+            ORDER BY p.product_name, pv.sku
+            LIMIT 100
+        """
+
+        with closing(self.database.connect()) as connection:
+
+            rows = connection.execute(
+                query,
+                (search_term, search_term, search_term)
+            ).fetchall()
+
+            return [
+                dict(row)
+                for row in rows
+            ]
+
+    def set_product_image(
+        self,
+        product_id: int,
+        source_path: str | Path
+    ) -> str:
+        """Copy an image into app-managed storage and assign it to a product."""
+
+        if (
+            not isinstance(product_id, int)
+            or isinstance(product_id, bool)
+            or product_id <= 0
+        ):
+            raise ValueError("Product ID must be a positive integer.")
+
+        if not isinstance(source_path, (str, Path)):
+            raise TypeError("Image source must be a file path.")
+
+        source = Path(source_path).expanduser().resolve()
+        if not source.is_file():
+            raise ValueError("Selected product image does not exist.")
+
+        extension = source.suffix.lower()
+        if extension not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+            raise ValueError("Select a PNG, JPEG, WebP, or BMP image.")
+
+        image_directory = DATA_DIR / "product_images"
+        image_directory.mkdir(parents=True, exist_ok=True)
+        destination = image_directory / (
+            f"{product_id}_{uuid4().hex}{extension}"
+        )
+        stored_path = f"product_images/{destination.name}"
+
+        persisted = False
+        old_image_path = None
+        try:
+            shutil.copy2(source, destination)
+
+            with self.database.transaction() as connection:
+                row = connection.execute(
+                    """
+                    SELECT image_path
+                    FROM products
+                    WHERE product_id = ?
+                    """,
+                    (product_id,)
+                ).fetchone()
+
+                if row is None:
+                    raise ValueError("Product does not exist.")
+
+                old_image_path = row["image_path"]
+                if not self.product_repository.update_image_path(
+                    product_id,
+                    stored_path,
+                    connection=connection
+                ):
+                    raise ValueError("Product image could not be saved.")
+
+            persisted = True
+        finally:
+            if not persisted and destination.exists():
+                destination.unlink()
+
+        self._remove_managed_product_image(old_image_path)
+        return stored_path
+
+    def remove_product_image(self, product_id: int) -> bool:
+        """Remove the product image reference and its managed file."""
+
+        if (
+            not isinstance(product_id, int)
+            or isinstance(product_id, bool)
+            or product_id <= 0
+        ):
+            raise ValueError("Product ID must be a positive integer.")
+
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT image_path
+                FROM products
+                WHERE product_id = ?
+                """,
+                (product_id,)
+            ).fetchone()
+
+            if row is None:
+                raise ValueError("Product does not exist.")
+
+            old_image_path = row["image_path"]
+            if old_image_path is None:
+                return False
+
+            if not self.product_repository.update_image_path(
+                product_id,
+                None,
+                connection=connection
+            ):
+                raise ValueError("Product image could not be removed.")
+
+        self._remove_managed_product_image(old_image_path)
+        return True
+
+    @staticmethod
+    def resolve_product_image_path(image_path: str | None) -> Path | None:
+        """Resolve a stored image path to its filesystem location."""
+
+        if not image_path:
+            return None
+
+        path = Path(image_path)
+        if not path.is_absolute():
+            path = DATA_DIR / path
+        return path.resolve()
+
+    @staticmethod
+    def _remove_managed_product_image(image_path: str | None) -> None:
+        if not image_path:
+            return
+
+        image_directory = (DATA_DIR / "product_images").resolve()
+        stored_path = Path(image_path)
+        image_file = (
+            stored_path
+            if stored_path.is_absolute()
+            else DATA_DIR / stored_path
+        ).resolve()
+
+        if image_directory not in image_file.parents:
+            return
+
+        if image_file.is_file():
+            image_file.unlink()

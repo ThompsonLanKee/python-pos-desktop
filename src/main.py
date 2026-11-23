@@ -20,12 +20,11 @@ from src.services.authorization_service import AuthorizationService
 from src.services.sale_service import SaleService
 from src.services.user_management_service import UserManagementService
 from src.services.role_management_service import RoleManagementService
-
+from src.services.product_service import ProductService
 
 # Views
 from src.views.login_view import LoginView
 from src.views.main_window import MainWindow
-
 
 
 def main():
@@ -68,17 +67,19 @@ def main():
 
     sale_service = SaleService(database)
 
+    product_service = ProductService(database)
+
     user_management_service = UserManagementService(
         user_repository,
         role_repository,
         database
     )
-    
+
     role_management_service = RoleManagementService(
-    role_repository,
-    permission_repository,
-    database
-)
+        role_repository,
+        permission_repository,
+        database
+    )
 
     # ==========================================
     # LOGIN WINDOW
@@ -98,7 +99,8 @@ def main():
             authorization_service,
             sale_service,
             user_management_service,
-            role_management_service
+            role_management_service,
+            product_service
         )
 
         main_window.logout_requested.connect(show_login)

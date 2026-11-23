@@ -28,9 +28,10 @@ class ProductRepository(BaseRepository):
                 description,
                 category_id,
                 brand,
+                image_path,
                 is_active
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
         """
 
         with self.connection_scope(connection) as db_connection:
@@ -42,6 +43,7 @@ class ProductRepository(BaseRepository):
                     product.description,
                     product.category_id,
                     product.brand,
+                    product.image_path,
                     product.is_active
                 )
             )
@@ -200,6 +202,28 @@ class ProductRepository(BaseRepository):
                 )
             )
 
+            return cursor.rowcount > 0
+
+    def update_image_path(
+        self,
+        product_id: int,
+        image_path: Optional[str],
+        connection: Optional[sqlite3.Connection] = None
+    ) -> bool:
+        """Set or clear a product's image path."""
+
+        query = """
+            UPDATE products
+            SET image_path = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE product_id = ?
+        """
+
+        with self.connection_scope(connection) as db_connection:
+            cursor = db_connection.execute(
+                query,
+                (image_path, product_id)
+            )
             return cursor.rowcount > 0
 
     # ==========================================

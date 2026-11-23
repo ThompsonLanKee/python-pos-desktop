@@ -1,5 +1,6 @@
 
 from PySide6.QtCore import Qt, Signal
+
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -14,8 +15,10 @@ from PySide6.QtWidgets import (
 )
 
 from src.views.sale_view import SaleView
+from src.views.product_view import ProductManagementView
 from src.views.user_management_view import UserManagementView
 from src.views.role_management_view import RoleManagementView
+
 
 class MainWindow(QMainWindow):
     """
@@ -23,17 +26,19 @@ class MainWindow(QMainWindow):
 
     Features:
         - Dynamic RBAC navigation
-        - Permission-based dashboard widgets
-        - Protected page navigation
+        - Permission-based dashboard
+        - POS integration
+        - User Management integration
+        - Role Management integration
+        - Session logout
         - Green application theme
-        - Session logout integration
     """
 
     logout_requested = Signal()
 
-    # --------------------------------------------------
+    # ==========================================
     # PAGE CONFIGURATION
-    # --------------------------------------------------
+    # ==========================================
 
     PAGE_CONFIG = [
         ("▦", "Dashboard", "DASHBOARD_VIEW", "dashboard"),
@@ -67,9 +72,9 @@ class MainWindow(QMainWindow):
         "roles": "Manage roles and permissions.",
     }
 
-    # --------------------------------------------------
+    # ==========================================
     # DASHBOARD CONFIGURATION
-    # --------------------------------------------------
+    # ==========================================
 
     DASHBOARD_CARDS = [
         {
@@ -79,9 +84,9 @@ class MainWindow(QMainWindow):
             "permission": "SALE_CREATE",
         },
         {
-            "title": "Total Orders",
+            "title": "Total Sales",
             "value": "0",
-            "detail": "Orders processed",
+            "detail": "Sales processed",
             "permission": "SALE_CREATE",
         },
         {
@@ -104,9 +109,9 @@ class MainWindow(QMainWindow):
         },
     ]
 
-    # --------------------------------------------------
+    # ==========================================
     # INITIALIZATION
-    # --------------------------------------------------
+    # ==========================================
 
     def __init__(
         self,
@@ -115,40 +120,47 @@ class MainWindow(QMainWindow):
         authorization_service,
         sale_service,
         user_management_service,
-        role_management_service
+        role_management_service,
+        product_service,
     ):
         super().__init__()
 
+        # Session
         self.session = session
         self.session_manager = session_manager
+
+        # Services
         self.authorization_service = authorization_service
         self.sale_service = sale_service
         self.user_management_service = user_management_service
         self.role_management_service = role_management_service
+        self.product_service = product_service
 
-        # Retrieve current user's permissions
+        # Current user's permissions
         self.permissions = (
             self.authorization_service.get_user_permissions(
                 self.session.user_id
             )
         )
+
         self.current_page = None
 
         self.page_widgets = {}
         self.navigation_buttons = {}
 
+        # Window configuration
         self.setWindowTitle("POS Management System")
-        self.resize(1280, 800)
-        self.setMinimumSize(1050, 650)
+        self.resize(1400, 850)
+        self.setMinimumSize(1100, 700)
 
         self.setStyleSheet(self._get_stylesheet())
 
         self._build_ui()
         self._build_navigation()
 
-    # --------------------------------------------------
+    # ==========================================
     # MAIN UI
-    # --------------------------------------------------
+    # ==========================================
 
     def _build_ui(self):
 
@@ -156,24 +168,29 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         main_layout = QHBoxLayout(central_widget)
+
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
         # Sidebar
         self.sidebar = self._build_sidebar()
+
         main_layout.addWidget(self.sidebar)
 
-        # Main content container
+        # Main content
         content_container = QWidget()
 
         content_layout = QVBoxLayout(content_container)
+
         content_layout.setContentsMargins(
             28, 22, 28, 22
         )
+
         content_layout.setSpacing(20)
 
         # Header
         self.header = self._build_header()
+
         content_layout.addWidget(self.header)
 
         # Page stack
@@ -181,22 +198,22 @@ class MainWindow(QMainWindow):
 
         self.page_stack.setSizePolicy(
             QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding
+            QSizePolicy.Policy.Expanding,
         )
 
         content_layout.addWidget(self.page_stack)
 
         main_layout.addWidget(content_container, 1)
 
-    # --------------------------------------------------
+    # ==========================================
     # SIDEBAR
-    # --------------------------------------------------
+    # ==========================================
 
     def _build_sidebar(self):
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(235)
+        sidebar.setFixedWidth(250)
 
         layout = QVBoxLayout(sidebar)
 
@@ -206,7 +223,7 @@ class MainWindow(QMainWindow):
 
         layout.setSpacing(12)
 
-        # Application branding
+        # Branding
         logo = QLabel("POS SYSTEM")
         logo.setObjectName("logo")
 
@@ -224,7 +241,7 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(menu_label)
 
-        # Dynamic navigation
+        # Navigation container
         self.navigation_layout = QVBoxLayout()
         self.navigation_layout.setSpacing(6)
 
@@ -232,7 +249,7 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        # Current user information
+        # Logged-in user
         user_label = QLabel(
             f"{self.session.full_name}\n"
             f"@{self.session.username}"
@@ -253,9 +270,9 @@ class MainWindow(QMainWindow):
 
         return sidebar
 
-    # --------------------------------------------------
+    # ==========================================
     # HEADER
-    # --------------------------------------------------
+    # ==========================================
 
     def _build_header(self):
 
@@ -264,7 +281,7 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(header)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Page heading
+        # Page title and description
         title_container = QVBoxLayout()
 
         self.page_title = QLabel("Dashboard")
@@ -293,18 +310,18 @@ class MainWindow(QMainWindow):
 
         return header
 
-    # --------------------------------------------------
+    # ==========================================
     # RBAC NAVIGATION
-    # --------------------------------------------------
+    # ==========================================
 
     def _build_navigation(self):
         """
-        Build navigation using the current user's permissions.
+        Build navigation based on user permissions.
         """
 
         for icon, label, permission, page_key in self.PAGE_CONFIG:
 
-            # Hide unauthorized modules
+            # Skip unauthorized modules
             if permission not in self.permissions:
                 continue
 
@@ -335,18 +352,13 @@ class MainWindow(QMainWindow):
 
             self.page_stack.addWidget(page)
 
-        # Select initial page
         self._select_initial_page()
 
-    # --------------------------------------------------
+    # ==========================================
     # INITIAL PAGE
-    # --------------------------------------------------
+    # ==========================================
 
     def _select_initial_page(self):
-        """
-        Select dashboard when available.
-        Otherwise select the first authorized module.
-        """
 
         if "dashboard" in self.page_widgets:
 
@@ -354,9 +366,7 @@ class MainWindow(QMainWindow):
 
         elif self.page_widgets:
 
-            first_page = next(
-                iter(self.page_widgets)
-            )
+            first_page = next(iter(self.page_widgets))
 
             self.show_page(first_page)
 
@@ -364,38 +374,65 @@ class MainWindow(QMainWindow):
 
             self.show_access_denied()
 
-    # --------------------------------------------------
+    # ==========================================
     # PAGE FACTORY
-    # --------------------------------------------------
+    # ==========================================
 
     def _create_page(self, page_key, title):
         """
-        Create the appropriate page.
+        Return the correct view for each module.
         """
 
+        # Dashboard
         if page_key == "dashboard":
+
             return self._build_dashboard_page()
 
+        # Point of Sale
         if page_key == "sales":
+
             return SaleView(
-                sale_service=self.sale_service
-            )
-            
-        if page_key == "users":
-            return UserManagementView(
-                user_management_service=self.user_management_service,
-                current_user_id=self.session.user_id
-            )
-            
-        if page_key == "roles":
-            return RoleManagementView(
-                role_management_service=self.role_management_service
+                sale_service=self.sale_service,
+                product_service=self.product_service,
             )
 
-        # Generic placeholder for modules not implemented yet
+        if page_key == "products":
+
+            return ProductManagementView(
+                product_service=self.product_service,
+            )
+
+        # User Management
+        if page_key == "users":
+
+            return UserManagementView(
+                user_management_service=self.user_management_service,
+                current_user_id=self.session.user_id,
+            )
+
+        # Role Management
+        if page_key == "roles":
+
+            return RoleManagementView(
+                role_management_service=self.role_management_service,
+            )
+
+        # Other modules: temporary placeholders
+        return self._build_placeholder_page(
+            page_key,
+            title
+        )
+
+    # ==========================================
+    # PLACEHOLDER PAGE
+    # ==========================================
+
+    def _build_placeholder_page(self, page_key, title):
+
         page = QWidget()
 
         layout = QVBoxLayout(page)
+
         layout.setContentsMargins(0, 10, 0, 0)
         layout.setSpacing(16)
 
@@ -405,7 +442,7 @@ class MainWindow(QMainWindow):
         description = QLabel(
             self.PAGE_DESCRIPTIONS.get(
                 page_key,
-                f"Manage {title.lower()}."
+                f"Manage {title.lower()}.",
             )
         )
 
@@ -417,27 +454,20 @@ class MainWindow(QMainWindow):
 
         return page
 
-
-    # --------------------------------------------------
-    # DASHBOARD PAGE
-    # --------------------------------------------------
+    # ==========================================
+    # DASHBOARD
+    # ==========================================
 
     def _build_dashboard_page(self):
-        """
-        Create a permission-aware dashboard.
-        """
 
         page = QWidget()
 
         layout = QVBoxLayout(page)
 
-        layout.setContentsMargins(
-            0, 10, 0, 0
-        )
-
+        layout.setContentsMargins(0, 10, 0, 0)
         layout.setSpacing(20)
 
-        # Dashboard heading
+        # Heading
         heading = QLabel("Business Overview")
         heading.setObjectName("section_title")
 
@@ -451,10 +481,7 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(description)
 
-        # ----------------------------------------------
-        # DASHBOARD STATISTICS
-        # ----------------------------------------------
-
+        # Dashboard statistics
         grid = QGridLayout()
         grid.setSpacing(16)
 
@@ -493,7 +520,7 @@ class MainWindow(QMainWindow):
             grid.addWidget(
                 card,
                 index // 2,
-                index % 2
+                index % 2,
             )
 
         if authorized_cards:
@@ -511,10 +538,7 @@ class MainWindow(QMainWindow):
 
             layout.addWidget(no_widgets)
 
-        # ----------------------------------------------
-        # RECENT TRANSACTIONS
-        # ----------------------------------------------
-
+        # Recent transactions
         can_view_transactions = (
             "SALE_CREATE" in self.permissions
             or "REPORT_VIEW" in self.permissions
@@ -554,35 +578,34 @@ class MainWindow(QMainWindow):
 
         return page
 
-    # --------------------------------------------------
+    # ==========================================
     # PAGE NAVIGATION
-    # --------------------------------------------------
+    # ==========================================
 
     def show_page(self, page_key):
         """
-        Display a page only if the current user
-        has the corresponding permission.
+        Display an authorized page.
         """
 
         required_permission = self.PAGE_PERMISSIONS.get(
             page_key
         )
 
-        # Reject unknown pages
+        # Validate page
         if required_permission is None:
             return
 
-        # Verify cached authorization
+        # Validate permission
         if required_permission not in self.permissions:
             return
 
-        # Verify page availability
+        # Validate page availability
         if page_key not in self.page_widgets:
             return
 
         self.current_page = page_key
 
-        # Change current page
+        # Display page
         page = self.page_widgets[page_key]
 
         self.page_stack.setCurrentWidget(page)
@@ -590,33 +613,28 @@ class MainWindow(QMainWindow):
         # Update navigation selection
         for key, button in self.navigation_buttons.items():
 
-            button.setChecked(
-                key == page_key
-            )
+            button.setChecked(key == page_key)
 
         # Update header
         self.page_title.setText(
             self.PAGE_TITLES.get(
                 page_key,
-                page_key.title()
+                page_key.title(),
             )
         )
 
         self.page_subtitle.setText(
             self.PAGE_DESCRIPTIONS.get(
                 page_key,
-                ""
+                "",
             )
         )
 
-    # --------------------------------------------------
+    # ==========================================
     # ACCESS DENIED
-    # --------------------------------------------------
+    # ==========================================
 
     def show_access_denied(self):
-        """
-        Display when the user has no accessible modules.
-        """
 
         page = QWidget()
 
@@ -644,19 +662,19 @@ class MainWindow(QMainWindow):
 
         self.current_page = None
 
-        self.page_title.setText("Dashboard")
+        self.page_title.setText("Access Denied")
 
         self.page_subtitle.setText(
-            "Welcome to your POS management system."
+            "Contact your administrator for access."
         )
 
-    # --------------------------------------------------
+    # ==========================================
     # LOGOUT
-    # --------------------------------------------------
+    # ==========================================
 
     def logout(self):
         """
-        Terminate the current session and close the window.
+        End current session and return to login.
         """
 
         self.session_manager.end()
@@ -665,17 +683,15 @@ class MainWindow(QMainWindow):
 
         self.close()
 
-    # --------------------------------------------------
+    # ==========================================
     # GREEN THEME
-    # --------------------------------------------------
+    # ==========================================
 
     def _get_stylesheet(self):
 
         return """
 
-        /* ------------------------------------------
-           MAIN WINDOW
-        ------------------------------------------ */
+        /* MAIN WINDOW */
 
         QMainWindow {
             background-color: #F5F7F5;
@@ -687,9 +703,7 @@ class MainWindow(QMainWindow):
             font-size: 13px;
         }
 
-        /* ------------------------------------------
-           SIDEBAR
-        ------------------------------------------ */
+        /* SIDEBAR */
 
         #sidebar {
             background-color: #203D2E;
@@ -712,9 +726,7 @@ class MainWindow(QMainWindow):
             font-weight: bold;
         }
 
-        /* ------------------------------------------
-           NAVIGATION
-        ------------------------------------------ */
+        /* NAVIGATION */
 
         #nav_button {
             background-color: transparent;
@@ -736,9 +748,7 @@ class MainWindow(QMainWindow):
             font-weight: bold;
         }
 
-        /* ------------------------------------------
-           USER INFORMATION
-        ------------------------------------------ */
+        /* USER INFORMATION */
 
         #sidebar_user {
             color: white;
@@ -756,9 +766,7 @@ class MainWindow(QMainWindow):
             font-weight: bold;
         }
 
-        /* ------------------------------------------
-           LOGOUT
-        ------------------------------------------ */
+        /* LOGOUT */
 
         #logout_button {
             background-color: #294A37;
@@ -772,9 +780,7 @@ class MainWindow(QMainWindow):
             background-color: #A94442;
         }
 
-        /* ------------------------------------------
-           PAGE HEADER
-        ------------------------------------------ */
+        /* PAGE HEADER */
 
         #page_title {
             font-size: 25px;
@@ -793,9 +799,7 @@ class MainWindow(QMainWindow):
             color: #203D2E;
         }
 
-        /* ------------------------------------------
-           DASHBOARD CARDS
-        ------------------------------------------ */
+        /* DASHBOARD CARDS */
 
         #stat_card {
             background-color: white;

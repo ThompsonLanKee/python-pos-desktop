@@ -241,6 +241,8 @@ class Database:
 
                         brand TEXT,
 
+                        image_path TEXT,
+
                         is_active INTEGER NOT NULL DEFAULT 1
                             CHECK (is_active IN (0, 1)),
 
@@ -763,6 +765,19 @@ class Database:
                         ADD COLUMN parent_category_id INTEGER
                             REFERENCES categories(category_id)
                             ON DELETE SET NULL
+                    """)
+
+                product_columns = {
+                    row["name"]
+                    for row in connection.execute(
+                        "PRAGMA table_info(products)"
+                    ).fetchall()
+                }
+
+                if "image_path" not in product_columns:
+                    connection.execute("""
+                        ALTER TABLE products
+                        ADD COLUMN image_path TEXT
                     """)
 
         print("Database initialized successfully!")

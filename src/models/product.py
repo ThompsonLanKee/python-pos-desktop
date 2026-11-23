@@ -13,6 +13,7 @@ class Product:
     is_active: bool = True
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    image_path: Optional[str] = None
 
     def __post_init__(self):
         self.product_name = self.product_name.strip()

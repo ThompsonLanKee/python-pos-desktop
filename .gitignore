@@ -30,6 +30,7 @@ dist/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/product_images/
 
 # Keep data directory
 !data/.gitkeep
