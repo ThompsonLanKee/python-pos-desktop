@@ -521,6 +521,204 @@ class ProductService:
             is_active
         )
 
+    def get_variant_options(self) -> dict[str, list[dict]]:
+        """Return active colors and sizes for variant forms."""
+        with closing(self.database.connect()) as connection:
+            colors = connection.execute("""
+                SELECT color_id, color_name, hex_code
+                FROM colors
+                WHERE is_active = 1
+                ORDER BY color_name COLLATE NOCASE
+            """).fetchall()
+            sizes = connection.execute("""
+                SELECT size_id, size_name, sort_order
+                FROM sizes
+                WHERE is_active = 1
+                ORDER BY sort_order, size_name COLLATE NOCASE
+            """).fetchall()
+        return {
+            "colors": [dict(row) for row in colors],
+            "sizes": [dict(row) for row in sizes],
+        }
+
+    def create_variant(self, product_id: int, specification: dict) -> int:
+        """Create one variant and its zero-stock inventory record atomically."""
+        if not isinstance(product_id, int) or isinstance(product_id, bool) or product_id <= 0:
+            raise ValueError("A valid product is required.")
+        if not isinstance(specification, dict):
+            raise TypeError("Variant specification must be a dictionary.")
+
+        sku = specification.get("sku")
+        if not isinstance(sku, str) or not sku.strip():
+            raise ValueError("SKU is required.")
+        sku = sku.strip().upper()
+
+        barcode = specification.get("barcode")
+        if barcode is not None:
+            barcode = str(barcode).strip() or None
+
+        color_id = specification.get("color_id")
+        size_id = specification.get("size_id")
+        cost_price = float(specification.get("cost_price", 0))
+        selling_price = float(specification.get("selling_price", 0))
+        if cost_price < 0 or selling_price < 0:
+            raise ValueError("Prices cannot be negative.")
+
+        try:
+            with self.database.transaction() as connection:
+                product = connection.execute("""
+                    SELECT product_id FROM products
+                    WHERE product_id = ? AND is_active = 1
+                """, (product_id,)).fetchone()
+                if product is None:
+                    raise ValueError("Product does not exist or is inactive.")
+
+                self._validate_variant_attributes(
+                    connection, sku, barcode, color_id, size_id,
+                    product_id=product_id,
+                )
+
+                variant = ProductVariant(
+                    product_id=product_id,
+                    sku=sku,
+                    barcode=barcode,
+                    color_id=color_id,
+                    size_id=size_id,
+                    cost_price=cost_price,
+                    selling_price=selling_price,
+                    is_active=True,
+                )
+                variant_id = self.variant_repository.create(
+                    variant, connection=connection
+                )
+                self.inventory_repository.create(
+                    variant_id, connection=connection
+                )
+                return variant_id
+        except sqlite3.IntegrityError as error:
+            raise ValueError(f"Unable to create variant: {error}") from error
+
+    def update_variant(self, variant_id: int, specification: dict) -> bool:
+        """Update SKU, barcode, attributes and prices; inventory is untouched."""
+        if not isinstance(variant_id, int) or isinstance(variant_id, bool) or variant_id <= 0:
+            raise ValueError("A valid variant is required.")
+        if not isinstance(specification, dict):
+            raise TypeError("Variant specification must be a dictionary.")
+
+        sku = specification.get("sku")
+        if not isinstance(sku, str) or not sku.strip():
+            raise ValueError("SKU is required.")
+        sku = sku.strip().upper()
+
+        barcode = specification.get("barcode")
+        if barcode is not None:
+            barcode = str(barcode).strip() or None
+
+        color_id = specification.get("color_id")
+        size_id = specification.get("size_id")
+        cost_price = float(specification.get("cost_price", 0))
+        selling_price = float(specification.get("selling_price", 0))
+        if cost_price < 0 or selling_price < 0:
+            raise ValueError("Prices cannot be negative.")
+
+        try:
+            with self.database.transaction() as connection:
+                existing = connection.execute("""
+                    SELECT variant_id, product_id
+                    FROM product_variants WHERE variant_id = ?
+                """, (variant_id,)).fetchone()
+                if existing is None:
+                    raise ValueError("Variant does not exist.")
+
+                self._validate_variant_attributes(
+                    connection, sku, barcode, color_id, size_id,
+                    exclude_variant_id=variant_id,
+                    product_id=existing["product_id"],
+                )
+
+                variant = ProductVariant(
+                    variant_id=variant_id,
+                    product_id=existing["product_id"],
+                    sku=sku,
+                    barcode=barcode,
+                    color_id=color_id,
+                    size_id=size_id,
+                    cost_price=cost_price,
+                    selling_price=selling_price,
+                )
+                return self.variant_repository.update(
+                    variant, connection=connection
+                )
+        except sqlite3.IntegrityError as error:
+            raise ValueError(f"Unable to update variant: {error}") from error
+
+    def _validate_variant_attributes(
+        self, connection, sku, barcode, color_id, size_id,
+        exclude_variant_id=None, product_id=None
+    ):
+        """Validate unique codes and active color/size references."""
+        query = """
+            SELECT variant_id FROM product_variants
+            WHERE sku = ? COLLATE NOCASE
+        """
+        params = [sku]
+        if exclude_variant_id is not None:
+            query += " AND variant_id != ?"
+            params.append(exclude_variant_id)
+        if connection.execute(query, params).fetchone():
+            raise ValueError(f"SKU already exists: {sku}")
+
+        if barcode:
+            query = """
+                SELECT variant_id FROM product_variants
+                WHERE barcode = ? COLLATE NOCASE
+            """
+            params = [barcode]
+            if exclude_variant_id is not None:
+                query += " AND variant_id != ?"
+                params.append(exclude_variant_id)
+            if connection.execute(query, params).fetchone():
+                raise ValueError(f"Barcode already exists: {barcode}")
+
+        if color_id is not None:
+            if not isinstance(color_id, int) or isinstance(color_id, bool):
+                raise ValueError("Invalid color selection.")
+            if connection.execute("""
+                SELECT color_id FROM colors
+                WHERE color_id = ? AND is_active = 1
+            """, (color_id,)).fetchone() is None:
+                raise ValueError("Selected color does not exist or is inactive.")
+
+        if size_id is not None:
+            if not isinstance(size_id, int) or isinstance(size_id, bool):
+                raise ValueError("Invalid size selection.")
+            if connection.execute("""
+                SELECT size_id FROM sizes
+                WHERE size_id = ? AND is_active = 1
+            """, (size_id,)).fetchone() is None:
+                raise ValueError("Selected size does not exist or is inactive.")
+
+        if product_id is not None:
+            query = """
+                SELECT variant_id FROM product_variants
+                WHERE product_id = ?
+                  AND color_id IS ?
+                  AND size_id IS ?
+            """
+            params = [product_id, color_id, size_id]
+            if exclude_variant_id is not None:
+                query += " AND variant_id != ?"
+                params.append(exclude_variant_id)
+            if connection.execute(query, params).fetchone():
+                raise ValueError("This color and size combination already exists.")
+
+    def set_variant_active(self, variant_id: int, is_active: bool) -> bool:
+        """Activate or deactivate a variant without deleting its history."""
+        if not isinstance(variant_id, int) or isinstance(variant_id, bool) or variant_id <= 0:
+            raise ValueError("A valid variant is required.")
+        if not isinstance(is_active, bool):
+            raise TypeError("is_active must be a boolean.")
+        return self.variant_repository.set_active(variant_id, is_active)
 
     # ==========================================
     # POS PRODUCT SEARCH

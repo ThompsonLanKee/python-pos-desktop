@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QTabWidget,
 )
 from src.views.category_tab import CategoryTab
+from src.views.product_tab import ProductsTab
+from src.views.variant_options_tab import VariantOptionsTab
 
 
 class ProductPhotosTab(QWidget):
@@ -420,26 +422,12 @@ class ProductManagementView(QWidget):
             "Categories"
         )
 
-        # Products tab - implemented in the next stage
-        self.products_placeholder = QWidget()
-        products_layout = QVBoxLayout(
-            self.products_placeholder
+        # Products tab
+        self.products_tab = ProductsTab(
+            product_service=product_service
         )
-
-        products_message = QLabel(
-            "Product management will be implemented next."
-        )
-        products_message.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-        products_message.setStyleSheet(
-            "color: #718077; font-size: 15px;"
-        )
-
-        products_layout.addWidget(products_message)
-
         self.tabs.addTab(
-            self.products_placeholder,
+            self.products_tab,
             "Products"
         )
 
@@ -450,6 +438,15 @@ class ProductManagementView(QWidget):
         self.tabs.addTab(
             self.photos_tab,
             "Photos"
+        )
+        
+        self.options_tab = VariantOptionsTab(
+            database=product_service.database
+        )
+
+        self.tabs.addTab(
+        self.options_tab,
+        "Colors & Sizes"
         )
 
         layout.addWidget(self.tabs)
