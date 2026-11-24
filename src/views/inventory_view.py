@@ -1,14 +1,14 @@
 
 from operator import index
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QDate
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QDialog, QFormLayout,
     QSpinBox, QPlainTextEdit, QMessageBox, QTabWidget,
-    QInputDialog
+    QInputDialog, QDateEdit, QFileDialog
 )
 
 from PySide6.QtGui import QColor, QBrush
@@ -223,6 +223,7 @@ class InventoryView(QWidget):
         self.inventory_service = inventory_service
         self.inventory = []
         self.transactions = []
+        self.filtered_transactions = []
 
         self.setStyleSheet(STYLE)
 
@@ -370,9 +371,14 @@ class InventoryView(QWidget):
             self.update_reorder_level
         )
 
+        export_stock = QPushButton("Export Excel")
+        export_stock.setObjectName("primary")
+        export_stock.clicked.connect(self.export_stock_excel)
+
         toolbar.addWidget(self.search_input, 1)
         toolbar.addWidget(self.filter_combo)
         toolbar.addWidget(self.reorder_button)
+        toolbar.addWidget(export_stock)
         toolbar.addWidget(refresh)
 
         overview_layout.addLayout(toolbar)
@@ -415,10 +421,68 @@ class InventoryView(QWidget):
         )
         history_layout = QVBoxLayout(history)
 
-        history_refresh = QPushButton("Refresh History")
+        # Movement history filters
+        history_filters = QGridLayout()
+        history_filters.setHorizontalSpacing(8)
+        history_filters.setVerticalSpacing(8)
+
+        self.history_search = QLineEdit()
+        self.history_search.setPlaceholderText("Search SKU or product...")
+        self.history_search.textChanged.connect(self._apply_history_filters)
+
+        self.movement_type_filter = QComboBox()
+        self.movement_type_filter.addItem("All Movement Types", "all")
+        for movement_type in (
+            "PURCHASE", "SALE", "ADJUSTMENT_IN",
+            "ADJUSTMENT_OUT", "DAMAGE"
+        ):
+            self.movement_type_filter.addItem(movement_type, movement_type)
+        self.movement_type_filter.currentIndexChanged.connect(
+            self._apply_history_filters
+        )
+
+        self.history_start_date = QDateEdit()
+        self.history_start_date.setCalendarPopup(True)
+        self.history_start_date.setDisplayFormat("yyyy-MM-dd")
+        self.history_start_date.setDate(QDate.currentDate().addMonths(-1))
+        self.history_start_date.dateChanged.connect(
+            self._apply_history_filters
+        )
+
+        self.history_end_date = QDateEdit()
+        self.history_end_date.setCalendarPopup(True)
+        self.history_end_date.setDisplayFormat("yyyy-MM-dd")
+        self.history_end_date.setDate(QDate.currentDate())
+        self.history_end_date.dateChanged.connect(
+            self._apply_history_filters
+        )
+
+        history_refresh = QPushButton("Refresh")
         history_refresh.clicked.connect(self.load_transactions)
 
-        history_layout.addWidget(history_refresh)
+        reset_filters = QPushButton("Reset Filters")
+        reset_filters.clicked.connect(self.reset_history_filters)
+
+        export_history = QPushButton("Export Excel")
+        export_history.setObjectName("primary")
+        export_history.clicked.connect(self.export_history_excel)
+
+        history_filters.addWidget(self.history_search, 0, 0, 1, 2)
+        history_filters.addWidget(QLabel("Movement:"), 0, 2)
+        history_filters.addWidget(self.movement_type_filter, 0, 3)
+        history_filters.addWidget(QLabel("From:"), 1, 0)
+        history_filters.addWidget(self.history_start_date, 1, 1)
+        history_filters.addWidget(QLabel("To:"), 1, 2)
+        history_filters.addWidget(self.history_end_date, 1, 3)
+        history_filters.addWidget(reset_filters, 0, 4)
+        history_filters.addWidget(history_refresh, 1, 4)
+        history_filters.addWidget(export_history, 0, 5, 2, 1)
+
+        history_layout.addLayout(history_filters)
+
+        self.history_count_label = QLabel("0 movements")
+        self.history_count_label.setStyleSheet("color: #718078;")
+        history_layout.addWidget(self.history_count_label)
 
         self.history_table = self._create_table([
             "Date",
@@ -690,6 +754,146 @@ class InventoryView(QWidget):
                 f"Unable to load inventory:\n{exc}"
             )
 
+    def export_stock_excel(self):
+        """Export the currently filtered stock overview to an XLSX file."""
+        keyword = self.search_input.text().strip().lower()
+        filter_type = self.filter_combo.currentData()
+
+        rows = []
+        for item in self.inventory:
+            searchable = " ".join(
+                str(item.get(key, "") or "")
+                for key in (
+                    "sku", "barcode", "product_name",
+                    "color_name", "size_name"
+                )
+            ).lower()
+
+            if keyword and keyword not in searchable:
+                continue
+
+            quantity = int(item.get("quantity_on_hand") or 0)
+            reorder = int(item.get("reorder_level") or 0)
+
+            if filter_type == "low" and not (
+                quantity > 0 and quantity <= reorder
+            ):
+                continue
+
+            if filter_type == "out" and quantity != 0:
+                continue
+
+            status = (
+                "Out of Stock" if quantity == 0
+                else "Low Stock" if quantity <= reorder
+                else "In Stock"
+            )
+
+            rows.append((item, quantity, reorder, status))
+
+        if not rows:
+            self._show_message(
+                QMessageBox.Icon.Information,
+                "Nothing to Export",
+                "There are no stock records matching the current filters."
+            )
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Stock Overview",
+            "inventory_stock_overview.xlsx",
+            "Excel Workbook (*.xlsx)"
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Stock Overview"
+
+            headers = [
+                "SKU", "Barcode", "Product", "Color", "Size",
+                "Quantity", "Reorder Level", "Cost Price",
+                "Selling Price", "Stock Cost Value", "Status"
+            ]
+            sheet.append(headers)
+
+            for cell in sheet[1]:
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(
+                    fill_type="solid", fgColor="315F43"
+                )
+                cell.alignment = Alignment(horizontal="center")
+
+            for item, quantity, reorder, status in rows:
+                cost_price = float(item.get("cost_price") or 0)
+                selling_price = float(item.get("selling_price") or 0)
+
+                sheet.append([
+                    item.get("sku", ""),
+                    item.get("barcode", "") or "",
+                    item.get("product_name", ""),
+                    item.get("color_name", "") or "",
+                    item.get("size_name", "") or "",
+                    quantity,
+                    reorder,
+                    cost_price,
+                    selling_price,
+                    quantity * cost_price,
+                    status,
+                ])
+
+            for row in sheet.iter_rows(min_row=2):
+                for cell in row:
+                    if cell.column in (8, 9, 10):
+                        cell.number_format = '#,##0.00'
+                status_cell = row[10]
+                if status_cell.value == "In Stock":
+                    status_cell.font = Font(color="237A43", bold=True)
+                elif status_cell.value == "Low Stock":
+                    status_cell.font = Font(color="9A6700", bold=True)
+                else:
+                    status_cell.font = Font(color="B42318", bold=True)
+
+            for column_cells in sheet.columns:
+                max_length = max(
+                    len(str(cell.value or "")) for cell in column_cells
+                )
+                sheet.column_dimensions[
+                    get_column_letter(column_cells[0].column)
+                ].width = min(max(max_length + 3, 14), 34)
+
+            sheet.freeze_panes = "A2"
+            sheet.auto_filter.ref = sheet.dimensions
+            workbook.save(file_path)
+
+            self._show_message(
+                QMessageBox.Icon.Information,
+                "Export Complete",
+                f"Stock overview exported successfully:\n{file_path}"
+            )
+
+        except ImportError:
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "Excel Library Missing",
+                "Install openpyxl using:\npython -m pip install openpyxl"
+            )
+        except Exception as exc:
+            self._show_message(
+                QMessageBox.Icon.Critical,
+                "Export Failed",
+                str(exc)
+            )
+
     def _selected_item(self):
         row = self.stock_table.currentRow()
 
@@ -843,59 +1047,179 @@ class InventoryView(QWidget):
             self.transactions = (
                 self.inventory_service.get_all_transactions()
             )
-
-            self.history_table.setRowCount(
-                len(self.transactions)
-            )
-
-            for row, item in enumerate(self.transactions):
-
-                quantity_change = int(
-                    item.get("quantity_change") or 0
-                )
-
-                if quantity_change > 0:
-                    quantity_text = f"+{quantity_change}"
-                else:
-                    quantity_text = str(quantity_change)
-
-                values = [
-                    item.get("created_at", ""),
-                    item.get("sku", ""),
-                    item.get("product_name", ""),
-                    item.get("transaction_type", ""),
-                    quantity_text,
-                    str(item.get("quantity_after", "")),
-                    item.get("notes") or "—",
-                ]
-
-                for col, value in enumerate(values):
-
-                    cell = QTableWidgetItem(str(value))
-
-                    if col == 4:
-                        if quantity_change > 0:
-                            cell.setForeground(
-                                QBrush(QColor("#237A43"))
-                            )
-                        elif quantity_change < 0:
-                            cell.setForeground(
-                                QBrush(QColor("#B42318"))
-                            )
-
-                    if col == 3:
-                        cell.setForeground(
-                            QBrush(QColor("#315F43"))
-                        )
-
-                    self.history_table.setItem(
-                        row, col, cell
-                    )
+            self._apply_history_filters()
 
         except Exception as exc:
             QMessageBox.warning(
                 self,
                 "History Error",
+                str(exc)
+            )
+
+    def _apply_history_filters(self, *_):
+        """Filter movement history using search, type and date range."""
+        keyword = self.history_search.text().strip().lower()
+        movement_type = self.movement_type_filter.currentData()
+        start_date = self.history_start_date.date().toString("yyyy-MM-dd")
+        end_date = self.history_end_date.date().toString("yyyy-MM-dd")
+
+        if start_date > end_date:
+            self.history_count_label.setText(
+                "Invalid date range: start date is after end date."
+            )
+            self.history_table.setRowCount(0)
+            self.filtered_transactions = []
+            return
+
+        filtered = []
+        for item in self.transactions:
+            created_at = str(item.get("created_at") or "")
+            movement_date = created_at[:10]
+
+            searchable = " ".join(
+                str(item.get(key) or "")
+                for key in ("sku", "product_name", "notes", "reference_type")
+            ).lower()
+
+            if keyword and keyword not in searchable:
+                continue
+            if movement_type != "all" and item.get("transaction_type") != movement_type:
+                continue
+            if not movement_date or not (start_date <= movement_date <= end_date):
+                continue
+
+            filtered.append(item)
+
+        self.filtered_transactions = filtered
+        self.history_table.setRowCount(len(filtered))
+
+        for row, item in enumerate(filtered):
+            quantity_change = int(item.get("quantity_change") or 0)
+            quantity_text = (
+                f"+{quantity_change}" if quantity_change > 0
+                else str(quantity_change)
+            )
+
+            values = [
+                item.get("created_at", ""),
+                item.get("sku", ""),
+                item.get("product_name", ""),
+                item.get("transaction_type", ""),
+                quantity_text,
+                str(item.get("quantity_after", "")),
+                item.get("notes") or "—",
+            ]
+
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+
+                if col == 4:
+                    if quantity_change > 0:
+                        cell.setForeground(QBrush(QColor("#237A43")))
+                    elif quantity_change < 0:
+                        cell.setForeground(QBrush(QColor("#B42318")))
+
+                if col == 3:
+                    cell.setForeground(QBrush(QColor("#315F43")))
+
+                self.history_table.setItem(row, col, cell)
+
+        self.history_count_label.setText(
+            f"Showing {len(filtered):,} of {len(self.transactions):,} movements"
+        )
+
+    def reset_history_filters(self):
+        self.history_search.clear()
+        self.movement_type_filter.setCurrentIndex(0)
+        self.history_start_date.setDate(QDate.currentDate().addMonths(-1))
+        self.history_end_date.setDate(QDate.currentDate())
+        self._apply_history_filters()
+
+    def export_history_excel(self):
+        """Export the currently filtered movement history to an XLSX file."""
+        if not self.filtered_transactions:
+            self._show_message(
+                QMessageBox.Icon.Information,
+                "Nothing to Export",
+                "There are no movement records matching the current filters."
+            )
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Movement History",
+            "inventory_movement_history.xlsx",
+            "Excel Workbook (*.xlsx)"
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Movement History"
+
+            headers = [
+                "Transaction Date", "SKU", "Product", "Movement Type",
+                "Quantity Change", "Balance After", "Reference Type",
+                "Reference ID", "Notes"
+            ]
+            sheet.append(headers)
+
+            for cell in sheet[1]:
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(
+                    fill_type="solid", fgColor="315F43"
+                )
+                cell.alignment = Alignment(horizontal="center")
+
+            for item in self.filtered_transactions:
+                sheet.append([
+                    item.get("created_at", ""),
+                    item.get("sku", ""),
+                    item.get("product_name", ""),
+                    item.get("transaction_type", ""),
+                    int(item.get("quantity_change") or 0),
+                    int(item.get("quantity_after") or 0),
+                    item.get("reference_type") or "",
+                    item.get("reference_id") or "",
+                    item.get("notes") or "",
+                ])
+
+            for column_cells in sheet.columns:
+                max_length = max(
+                    len(str(cell.value or "")) for cell in column_cells
+                )
+                sheet.column_dimensions[
+                    get_column_letter(column_cells[0].column)
+                ].width = min(max(max_length + 3, 14), 36)
+
+            sheet.freeze_panes = "A2"
+            sheet.auto_filter.ref = sheet.dimensions
+            workbook.save(file_path)
+
+            self._show_message(
+                QMessageBox.Icon.Information,
+                "Export Complete",
+                f"Movement history exported successfully to:\n{file_path}"
+            )
+
+        except ImportError:
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "Excel Library Missing",
+                "Install openpyxl first using:\npython -m pip install openpyxl"
+            )
+        except Exception as exc:
+            self._show_message(
+                QMessageBox.Icon.Critical,
+                "Export Failed",
                 str(exc)
             )
 
