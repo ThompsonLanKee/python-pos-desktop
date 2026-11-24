@@ -1,5 +1,5 @@
 
-from operator import index
+from datetime import datetime
 
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtWidgets import (
@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QDialog, QFormLayout,
     QSpinBox, QPlainTextEdit, QMessageBox, QTabWidget,
-    QInputDialog, QDateEdit, QFileDialog
+    QInputDialog, QDateEdit, QFileDialog, QScrollArea,
+    QCalendarWidget
 )
 
 from PySide6.QtGui import QColor, QBrush
@@ -237,6 +238,19 @@ class InventoryView(QWidget):
 
         elif index == 2:
             self.load_reports()
+            self.reports_scroll.verticalScrollBar().setValue(0)
+
+    def _on_report_start_changed(self):
+        start = self.report_start_date.date()
+        if start > self.report_end_date.date():
+            self.report_end_date.setDate(start)
+        self.load_reports()
+
+    def _on_report_end_changed(self):
+        end = self.report_end_date.date()
+        if end < self.report_start_date.date():
+            self.report_start_date.setDate(end)
+        self.load_reports()
             
     def load_reports(self):
         try:
@@ -245,31 +259,38 @@ class InventoryView(QWidget):
             total_units = 0
             total_cost_value = 0.0
             total_sales_value = 0.0
+            category_totals = {}
 
             self.report_table.setRowCount(len(inventory))
 
             for row, item in enumerate(inventory):
-
-                quantity = int(
-                    item.get("quantity_on_hand") or 0
-                )
-
-                cost_price = float(
-                    item.get("cost_price") or 0
-                )
-
-                selling_price = float(
-                    item.get("selling_price") or 0
-                )
+                quantity = int(item.get("quantity_on_hand") or 0)
+                cost_price = float(item.get("cost_price") or 0)
+                selling_price = float(item.get("selling_price") or 0)
 
                 cost_value = quantity * cost_price
                 sales_value = quantity * selling_price
+                margin_value = sales_value - cost_value
 
                 total_units += quantity
                 total_cost_value += cost_value
                 total_sales_value += sales_value
 
+                category_name = item.get("category_name") or "Uncategorized"
+                category = category_totals.setdefault(
+                    category_name,
+                    {
+                        "units": 0,
+                        "cost": 0.0,
+                        "sales": 0.0,
+                    }
+                )
+                category["units"] += quantity
+                category["cost"] += cost_value
+                category["sales"] += sales_value
+
                 values = [
+                    category_name,
                     item.get("sku", ""),
                     item.get("product_name", ""),
                     str(quantity),
@@ -280,18 +301,75 @@ class InventoryView(QWidget):
                 ]
 
                 for col, value in enumerate(values):
-                    cell = QTableWidgetItem(str(value))
-                    self.report_table.setItem(row, col, cell)
+                    self.report_table.setItem(
+                        row, col, QTableWidgetItem(str(value))
+                    )
 
-            potential_margin = (
-                total_sales_value - total_cost_value
-            )
+            potential_margin = total_sales_value - total_cost_value
 
             self.report_summary.setText(
                 f"Total Units: {total_units:,}\n"
                 f"Total Stock Cost Value: {total_cost_value:,.2f} MMK\n"
                 f"Potential Sales Value: {total_sales_value:,.2f} MMK\n"
                 f"Potential Gross Margin: {potential_margin:,.2f} MMK"
+            )
+
+            categories = sorted(category_totals.items())
+            self.category_report_table.setRowCount(len(categories))
+
+            for row, (category_name, totals) in enumerate(categories):
+                margin = totals["sales"] - totals["cost"]
+                values = [
+                    category_name,
+                    f'{totals["units"]:,}',
+                    f'{totals["cost"]:,.2f}',
+                    f'{totals["sales"]:,.2f}',
+                    f'{margin:,.2f}',
+                ]
+                for col, value in enumerate(values):
+                    self.category_report_table.setItem(
+                        row, col, QTableWidgetItem(str(value))
+                    )
+
+            # Date filters apply to movement totals, not current on-hand valuation.
+            start_date = self.report_start_date.date().toString("yyyy-MM-dd")
+            end_date = self.report_end_date.date().toString("yyyy-MM-dd")
+
+            if start_date > end_date:
+                self.report_movement_summary.setText(
+                    "Invalid movement date range: start date is after end date."
+                )
+                return
+
+            transactions = self.inventory_service.get_all_transactions()
+            received = 0
+            issued = 0
+            net_change = 0
+            matching_count = 0
+
+            for transaction in transactions:
+                created_at = str(transaction.get("created_at") or "")
+                transaction_date = created_at[:10]
+                if not transaction_date or not (
+                    start_date <= transaction_date <= end_date
+                ):
+                    continue
+
+                change = int(transaction.get("quantity_change") or 0)
+                matching_count += 1
+                net_change += change
+
+                if change > 0:
+                    received += change
+                elif change < 0:
+                    issued += abs(change)
+
+            self.report_movement_summary.setText(
+                f"Movement summary ({start_date} to {end_date})\n"
+                f"Transactions: {matching_count:,}    "
+                f"Stock In: +{received:,}    "
+                f"Stock Out: -{issued:,}    "
+                f"Net Movement: {net_change:+,}"
             )
 
         except Exception as exc:
@@ -445,6 +523,7 @@ class InventoryView(QWidget):
         self.history_start_date.setCalendarPopup(True)
         self.history_start_date.setDisplayFormat("yyyy-MM-dd")
         self.history_start_date.setDate(QDate.currentDate().addMonths(-1))
+        self._configure_date_edit(self.history_start_date)
         self.history_start_date.dateChanged.connect(
             self._apply_history_filters
         )
@@ -453,6 +532,7 @@ class InventoryView(QWidget):
         self.history_end_date.setCalendarPopup(True)
         self.history_end_date.setDisplayFormat("yyyy-MM-dd")
         self.history_end_date.setDate(QDate.currentDate())
+        self._configure_date_edit(self.history_end_date)
         self.history_end_date.dateChanged.connect(
             self._apply_history_filters
         )
@@ -501,6 +581,36 @@ class InventoryView(QWidget):
         # Inventory Reports
         reports = QWidget()
         reports_layout = QVBoxLayout(reports)
+        reports_layout.setContentsMargins(0, 0, 0, 0)
+        reports_layout.setSpacing(0)
+
+        reports_scroll = QScrollArea()
+        reports_scroll.setWidgetResizable(True)
+        reports_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        reports_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        reports_scroll.setStyleSheet("""
+            QScrollArea {
+                background: #F5F8F6;
+                border: none;
+            }
+            QScrollArea > QWidget > QWidget {
+                background: #F5F8F6;
+            }
+        """)
+        self.reports_scroll = reports_scroll
+
+        reports_content = QWidget()
+        reports_content.setObjectName("reports_content")
+        reports_content.setStyleSheet(
+            "#reports_content { background: #F5F8F6; }"
+        )
+        reports_layout_inner = QVBoxLayout(reports_content)
+        reports_layout_inner.setContentsMargins(0, 0, 4, 0)
+        reports_layout_inner.setSpacing(12)
+        reports_scroll.setWidget(reports_content)
+        reports_layout.addWidget(reports_scroll)
 
         report_heading = QLabel("Inventory Valuation")
         report_heading.setStyleSheet(
@@ -511,8 +621,38 @@ class InventoryView(QWidget):
             "View current stock quantities and estimated inventory values."
         )
 
-        reports_layout.addWidget(report_heading)
-        reports_layout.addWidget(report_description)
+        reports_layout_inner.addWidget(report_heading)
+        reports_layout_inner.addWidget(report_description)
+
+        report_filters = QGridLayout()
+        self.report_start_date = QDateEdit()
+        self.report_start_date.setCalendarPopup(True)
+        self.report_start_date.setDisplayFormat("yyyy-MM-dd")
+        self.report_start_date.setDate(QDate.currentDate().addMonths(-1))
+        self.report_start_date.setMinimumWidth(125)
+        self._configure_date_edit(self.report_start_date)
+
+        self.report_end_date = QDateEdit()
+        self.report_end_date.setCalendarPopup(True)
+        self.report_end_date.setDisplayFormat("yyyy-MM-dd")
+        self.report_end_date.setDate(QDate.currentDate())
+        self.report_end_date.setMinimumWidth(125)
+        self._configure_date_edit(self.report_end_date)
+
+        report_filters.addWidget(QLabel("Movement From:"), 0, 0)
+        report_filters.addWidget(self.report_start_date, 0, 1)
+        report_filters.addWidget(QLabel("To:"), 0, 2)
+        report_filters.addWidget(self.report_end_date, 0, 3)
+
+        self.report_movement_summary = QLabel(
+            "Movement totals for the selected date range will appear here."
+        )
+        self.report_movement_summary.setStyleSheet(
+            "background: #F5F8F6; border: 1px solid #DCE5DE; "
+            "border-radius: 7px; padding: 10px; color: #203D2E;"
+        )
+        report_filters.addWidget(self.report_movement_summary, 1, 0, 1, 4)
+        reports_layout_inner.addLayout(report_filters)
 
         self.report_summary = QLabel()
         self.report_summary.setStyleSheet("""
@@ -523,9 +663,10 @@ class InventoryView(QWidget):
             font-size: 14px;
             color: #203D2E;
         """)
-        reports_layout.addWidget(self.report_summary)
+        reports_layout_inner.addWidget(self.report_summary)
 
         self.report_table = self._create_table([
+            "Category",
             "SKU",
             "Product",
             "Quantity",
@@ -535,17 +676,122 @@ class InventoryView(QWidget):
             "Potential Sales Value"
         ])
 
-        reports_layout.addWidget(self.report_table)
+        reports_layout_inner.addWidget(self.report_table)
+        self.report_table.setMinimumHeight(220)
+        self.report_table.setMaximumHeight(260)
+
+        report_buttons = QHBoxLayout()
 
         report_refresh = QPushButton("Refresh Reports")
         report_refresh.clicked.connect(self.load_reports)
-        reports_layout.addWidget(report_refresh)
+
+        export_report_excel = QPushButton("Export Excel")
+        export_report_excel.setObjectName("primary")
+        export_report_excel.clicked.connect(self.export_valuation_excel)
+
+        export_report_pdf = QPushButton("Export PDF")
+        export_report_pdf.clicked.connect(self.export_valuation_pdf)
+
+        self.report_start_date.dateChanged.connect(
+            self._on_report_start_changed
+        )
+        self.report_end_date.dateChanged.connect(
+            self._on_report_end_changed
+        )
+
+        report_buttons.addWidget(report_refresh)
+        report_buttons.addStretch()
+        report_buttons.addWidget(export_report_excel)
+        report_buttons.addWidget(export_report_pdf)
+        reports_layout_inner.addLayout(report_buttons)
+
+        self.category_report_table = self._create_table([
+            "Category",
+            "Total Units",
+            "Stock Cost Value",
+            "Potential Sales Value",
+            "Potential Gross Margin"
+        ])
+        reports_layout_inner.addWidget(QLabel("Valuation by Category"))
+        reports_layout_inner.addWidget(self.category_report_table)
+        self.category_report_table.setMinimumHeight(150)
+        self.category_report_table.setMaximumHeight(240)
 
         self.tabs.addTab(reports, "Inventory Reports")
         
         self.tabs.currentChanged.connect(
         self._on_tab_changed
         )
+
+    @staticmethod
+    def _configure_date_edit(date_edit):
+        date_edit.setMinimumWidth(125)
+        date_edit.setStyleSheet("""
+            QDateEdit {
+                background: white;
+                color: #26352C;
+                border: 1px solid #C9D9CE;
+                border-radius: 7px;
+                padding: 7px 28px 7px 8px;
+            }
+            QDateEdit:focus {
+                border: 1px solid #315F43;
+            }
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: right center;
+                width: 24px;
+                border: none;
+            }
+        """)
+
+        calendar = date_edit.calendarWidget()
+        calendar.setGridVisible(False)
+        calendar.setVerticalHeaderFormat(
+            QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader
+        )
+        calendar.setMinimumSize(280, 230)
+        calendar.setStyleSheet("""
+            QCalendarWidget {
+                background: white;
+                color: #26352C;
+            }
+            QCalendarWidget QWidget {
+                background: white;
+                color: #26352C;
+            }
+            QCalendarWidget QAbstractItemView {
+                background: white;
+                color: #26352C;
+                selection-background-color: #315F43;
+                selection-color: white;
+                outline: none;
+            }
+            QCalendarWidget QAbstractItemView:disabled {
+                color: #A9B5AD;
+            }
+            QCalendarWidget QToolButton {
+                background: #EAF1EC;
+                color: #203D2E;
+                border: none;
+                border-radius: 5px;
+                padding: 6px;
+                font-weight: 600;
+            }
+            QCalendarWidget QToolButton:hover {
+                background: #D6EBDD;
+            }
+            QCalendarWidget QMenu {
+                background: white;
+                color: #26352C;
+            }
+            QCalendarWidget QSpinBox {
+                background: white;
+                color: #26352C;
+                border: 1px solid #DCE5DE;
+                padding: 3px;
+            }
+        """)
 
     def _create_card(self, grid, column, title):
         card = QWidget()
@@ -1222,6 +1468,447 @@ class InventoryView(QWidget):
                 "Export Failed",
                 str(exc)
             )
+
+
+    def _get_valuation_report_data(self):
+        """Build valuation rows and category totals from current stock."""
+        inventory = self.inventory_service.get_all_inventory()
+
+        product_rows = []
+        category_totals = {}
+
+        total_units = 0
+        total_cost_value = 0.0
+        total_sales_value = 0.0
+
+        for item in inventory:
+            quantity = int(item.get("quantity_on_hand") or 0)
+            cost_price = float(item.get("cost_price") or 0)
+            selling_price = float(item.get("selling_price") or 0)
+
+            cost_value = quantity * cost_price
+            sales_value = quantity * selling_price
+            category_name = item.get("category_name") or "Uncategorized"
+
+            product_rows.append({
+                "category": category_name,
+                "sku": item.get("sku", "") or "",
+                "product": item.get("product_name", "") or "",
+                "quantity": quantity,
+                "cost_price": cost_price,
+                "selling_price": selling_price,
+                "cost_value": cost_value,
+                "sales_value": sales_value,
+                "margin": sales_value - cost_value,
+            })
+
+            totals = category_totals.setdefault(
+                category_name,
+                {"units": 0, "cost": 0.0, "sales": 0.0}
+            )
+            totals["units"] += quantity
+            totals["cost"] += cost_value
+            totals["sales"] += sales_value
+
+            total_units += quantity
+            total_cost_value += cost_value
+            total_sales_value += sales_value
+
+        categories = []
+        for category_name, totals in sorted(category_totals.items()):
+            categories.append({
+                "category": category_name,
+                "units": totals["units"],
+                "cost": totals["cost"],
+                "sales": totals["sales"],
+                "margin": totals["sales"] - totals["cost"],
+            })
+
+        return {
+            "products": product_rows,
+            "categories": categories,
+            "total_units": total_units,
+            "total_cost": total_cost_value,
+            "total_sales": total_sales_value,
+            "total_margin": total_sales_value - total_cost_value,
+        }
+
+    def _get_movement_report_summary(self):
+        """Summarize movements for the currently selected report dates."""
+        start_date = self.report_start_date.date().toString("yyyy-MM-dd")
+        end_date = self.report_end_date.date().toString("yyyy-MM-dd")
+
+        if start_date > end_date:
+            raise ValueError("The movement start date cannot be after the end date.")
+
+        transactions = self.inventory_service.get_all_transactions()
+        received = 0
+        issued = 0
+        net_change = 0
+        count = 0
+
+        for transaction in transactions:
+            created_at = str(transaction.get("created_at") or "")
+            transaction_date = created_at[:10]
+
+            if not transaction_date or not (start_date <= transaction_date <= end_date):
+                continue
+
+            change = int(transaction.get("quantity_change") or 0)
+            count += 1
+            net_change += change
+
+            if change > 0:
+                received += change
+            elif change < 0:
+                issued += abs(change)
+
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "count": count,
+            "received": received,
+            "issued": issued,
+            "net": net_change,
+        }
+
+    def export_valuation_excel(self):
+        """Export current stock valuation and category totals to two worksheets."""
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+
+            data = self._get_valuation_report_data()
+            movement = self._get_movement_report_summary()
+
+            if not data["products"]:
+                self._show_message(
+                    QMessageBox.Icon.Information,
+                    "Nothing to Export",
+                    "There are no inventory records to include in the valuation report."
+                )
+                return
+
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Inventory Valuation",
+                "inventory_valuation.xlsx",
+                "Excel Workbook (*.xlsx)"
+            )
+            if not file_path:
+                return
+            if not file_path.lower().endswith(".xlsx"):
+                file_path += ".xlsx"
+
+            workbook = Workbook()
+            product_sheet = workbook.active
+            product_sheet.title = "Product Valuation"
+            category_sheet = workbook.create_sheet("Category Valuation")
+
+            generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            product_sheet.append(["Inventory Valuation Report"])
+            product_sheet.append(["Generated At", generated_at])
+            product_sheet.append([
+                "Movement Period",
+                f'{movement["start_date"]} to {movement["end_date"]}'
+            ])
+            product_sheet.append([
+                "Movement Summary",
+                f'Transactions: {movement["count"]}',
+                f'Stock In: +{movement["received"]}',
+                f'Stock Out: -{movement["issued"]}',
+                f'Net: {movement["net"]:+}'
+            ])
+            product_sheet.append([])
+            product_headers = [
+                "Category", "SKU", "Product", "Quantity",
+                "Cost Price (MMK)", "Selling Price (MMK)",
+                "Stock Cost Value (MMK)", "Potential Sales Value (MMK)",
+                "Potential Gross Margin (MMK)"
+            ]
+            product_sheet.append(product_headers)
+
+            for row in data["products"]:
+                product_sheet.append([
+                    row["category"], row["sku"], row["product"],
+                    row["quantity"], row["cost_price"],
+                    row["selling_price"], row["cost_value"],
+                    row["sales_value"], row["margin"]
+                ])
+
+            product_sheet.append([])
+            product_sheet.append(["TOTAL"])
+            product_sheet.append([
+                "Total Units", data["total_units"],
+                "Stock Cost Value", data["total_cost"],
+                "Potential Sales Value", data["total_sales"],
+                "Potential Gross Margin", data["total_margin"]
+            ])
+
+            category_sheet.append(["Valuation by Category"])
+            category_sheet.append(["Generated At", generated_at])
+            category_sheet.append([])
+            category_headers = [
+                "Category", "Total Units", "Stock Cost Value (MMK)",
+                "Potential Sales Value (MMK)", "Potential Gross Margin (MMK)"
+            ]
+            category_sheet.append(category_headers)
+
+            for row in data["categories"]:
+                category_sheet.append([
+                    row["category"], row["units"], row["cost"],
+                    row["sales"], row["margin"]
+                ])
+
+            for sheet, header_row in (
+                (product_sheet, 6),
+                (category_sheet, 4),
+            ):
+                for cell in sheet[header_row]:
+                    cell.font = Font(bold=True, color="FFFFFF")
+                    cell.fill = PatternFill(
+                        fill_type="solid", fgColor="315F43"
+                    )
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                sheet.freeze_panes = f"A{header_row + 1}"
+                sheet.auto_filter.ref = (
+                    f"A{header_row}:{get_column_letter(sheet.max_column)}{sheet.max_row}"
+                )
+
+                for column_cells in sheet.columns:
+                    max_length = max(
+                        len(str(cell.value or "")) for cell in column_cells
+                    )
+                    column_letter = get_column_letter(column_cells[0].column)
+                    sheet.column_dimensions[column_letter].width = min(
+                        max(max_length + 3, 14), 36
+                    )
+
+            for row in product_sheet.iter_rows(min_row=7):
+                for cell in row[4:9]:
+                    cell.number_format = '#,##0.00'
+            for row in category_sheet.iter_rows(min_row=5):
+                for cell in row[2:5]:
+                    cell.number_format = '#,##0.00'
+
+            workbook.save(file_path)
+
+            self._show_message(
+                QMessageBox.Icon.Information,
+                "Export Complete",
+                f"Inventory valuation exported successfully:\n{file_path}"
+            )
+
+        except ImportError:
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "Excel Library Missing",
+                "Install openpyxl using:\npython -m pip install openpyxl"
+            )
+        except Exception as exc:
+            self._show_message(
+                QMessageBox.Icon.Critical,
+                "Export Failed",
+                str(exc)
+            )
+
+    def export_valuation_pdf(self):
+        """Export current valuation and selected-period movement summary to PDF."""
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import mm
+            from reportlab.platypus import (
+                SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            )
+
+            data = self._get_valuation_report_data()
+            movement = self._get_movement_report_summary()
+
+            if not data["products"]:
+                self._show_message(
+                    QMessageBox.Icon.Information,
+                    "Nothing to Export",
+                    "There are no inventory records to include in the valuation report."
+                )
+                return
+
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Inventory Valuation PDF",
+                "inventory_valuation.pdf",
+                "PDF File (*.pdf)"
+            )
+            if not file_path:
+                return
+            if not file_path.lower().endswith(".pdf"):
+                file_path += ".pdf"
+
+            generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                "InventoryTitle",
+                parent=styles["Title"],
+                textColor=colors.HexColor("#203D2E"),
+                alignment=TA_LEFT,
+                fontSize=17,
+                spaceAfter=5,
+            )
+            body_style = styles["BodyText"]
+            small_style = ParagraphStyle(
+                "InventorySmall",
+                parent=body_style,
+                fontSize=8,
+                leading=10,
+            )
+
+            document = SimpleDocTemplate(
+                file_path,
+                pagesize=landscape(A4),
+                rightMargin=12 * mm,
+                leftMargin=12 * mm,
+                topMargin=12 * mm,
+                bottomMargin=12 * mm,
+            )
+
+            story = [
+                Paragraph("Inventory Valuation Report", title_style),
+                Paragraph(f"Generated: {generated_at}", body_style),
+                Paragraph(
+                    f'Movement period: {movement["start_date"]} to {movement["end_date"]}',
+                    body_style
+                ),
+                Spacer(1, 5 * mm),
+            ]
+
+            summary_data = [
+                ["Total Units", "Stock Cost Value", "Potential Sales Value", "Potential Gross Margin"],
+                [
+                    f'{data["total_units"]:,}',
+                    f'{data["total_cost"]:,.2f} MMK',
+                    f'{data["total_sales"]:,.2f} MMK',
+                    f'{data["total_margin"]:,.2f} MMK',
+                ],
+            ]
+            summary_table = Table(summary_data, colWidths=[55 * mm] * 4)
+            summary_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF1EC")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#203D2E")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#DCE5DE")),
+                ("PADDING", (0, 0), (-1, -1), 7),
+            ]))
+            story.extend([
+                summary_table,
+                Spacer(1, 5 * mm),
+                Paragraph("Movement Summary", styles["Heading2"]),
+                Paragraph(
+                    f'Transactions: {movement["count"]:,} &nbsp;&nbsp; '
+                    f'Stock In: +{movement["received"]:,} &nbsp;&nbsp; '
+                    f'Stock Out: -{movement["issued"]:,} &nbsp;&nbsp; '
+                    f'Net Movement: {movement["net"]:+,}',
+                    body_style
+                ),
+                Spacer(1, 5 * mm),
+                Paragraph("Product Valuation", styles["Heading2"]),
+            ])
+
+            product_data = [[
+                "Category", "SKU", "Product", "Qty",
+                "Cost Price", "Selling Price", "Stock Cost",
+                "Potential Sales", "Gross Margin"
+            ]]
+            for row in data["products"]:
+                product_data.append([
+                    Paragraph(str(row["category"]), small_style),
+                    Paragraph(str(row["sku"]), small_style),
+                    Paragraph(str(row["product"]), small_style),
+                    f'{row["quantity"]:,}',
+                    f'{row["cost_price"]:,.2f}',
+                    f'{row["selling_price"]:,.2f}',
+                    f'{row["cost_value"]:,.2f}',
+                    f'{row["sales_value"]:,.2f}',
+                    f'{row["margin"]:,.2f}',
+                ])
+
+            product_table = Table(
+                product_data,
+                repeatRows=1,
+                colWidths=[28 * mm, 30 * mm, 38 * mm, 13 * mm,
+                           25 * mm, 25 * mm, 27 * mm, 28 * mm, 25 * mm]
+            )
+            product_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#315F43")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#DCE5DE")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                 [colors.white, colors.HexColor("#F5F8F6")]),
+                ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("PADDING", (0, 0), (-1, -1), 5),
+            ]))
+            story.extend([product_table, Spacer(1, 7 * mm)])
+
+            story.append(Paragraph("Valuation by Category", styles["Heading2"]))
+            category_data = [[
+                "Category", "Total Units", "Stock Cost Value",
+                "Potential Sales Value", "Potential Gross Margin"
+            ]]
+            for row in data["categories"]:
+                category_data.append([
+                    Paragraph(str(row["category"]), small_style),
+                    f'{row["units"]:,}',
+                    f'{row["cost"]:,.2f}',
+                    f'{row["sales"]:,.2f}',
+                    f'{row["margin"]:,.2f}',
+                ])
+
+            category_table = Table(
+                category_data,
+                repeatRows=1,
+                colWidths=[65 * mm, 35 * mm, 45 * mm, 48 * mm, 48 * mm]
+            )
+            category_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#315F43")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#DCE5DE")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                 [colors.white, colors.HexColor("#F5F8F6")]),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]))
+            story.append(category_table)
+
+            document.build(story)
+
+            self._show_message(
+                QMessageBox.Icon.Information,
+                "Export Complete",
+                f"Inventory valuation PDF exported successfully:\n{file_path}"
+            )
+
+        except ImportError:
+            self._show_message(
+                QMessageBox.Icon.Warning,
+                "PDF Library Missing",
+                "Install reportlab using:\npython -m pip install reportlab"
+            )
+        except Exception as exc:
+            self._show_message(
+                QMessageBox.Icon.Critical,
+                "PDF Export Failed",
+                str(exc)
+            )
+
 
     def refresh_all(self):
         self.load_inventory()

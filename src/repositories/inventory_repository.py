@@ -70,15 +70,16 @@ class InventoryRepository(BaseRepository):
 
         query = """
             SELECT
-                i.*,
-                pv.sku,
-                pv.barcode,
-                pv.cost_price,
-                pv.selling_price,
-                p.product_name,
-                col.color_name,
-                col.hex_code,
-                sz.size_name
+            i.*,
+            pv.sku,
+            pv.barcode,
+            pv.cost_price,
+            pv.selling_price,
+            p.product_name,
+            cat.category_name,
+            col.color_name,
+            col.hex_code,
+            sz.size_name
 
             FROM inventory i
 
@@ -88,6 +89,9 @@ class InventoryRepository(BaseRepository):
             INNER JOIN products p
                 ON pv.product_id = p.product_id
 
+            LEFT JOIN categories cat
+                ON p.category_id = cat.category_id
+
             LEFT JOIN colors col
                 ON pv.color_id = col.color_id
 
@@ -95,7 +99,7 @@ class InventoryRepository(BaseRepository):
                 ON pv.size_id = sz.size_id
 
             ORDER BY p.product_name, pv.sku
-        """
+            """
 
         with self.connection() as connection:
             rows = connection.execute(query).fetchall()
