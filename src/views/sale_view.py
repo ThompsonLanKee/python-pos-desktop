@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QMessageBox,
     QScrollArea,
+    QSizePolicy,
 )
 
 
@@ -103,6 +104,9 @@ class SaleView(QWidget):
         self.product_grid_layout.setContentsMargins(2, 2, 2, 2)
         self.product_grid_layout.setHorizontalSpacing(12)
         self.product_grid_layout.setVerticalSpacing(12)
+        self.product_cards_container.setObjectName(
+            "product_cards_container"
+        )
 
         self.product_cards_scroll.setWidget(
             self.product_cards_container
@@ -330,10 +334,32 @@ class SaleView(QWidget):
 
     def _show_product_card_message(self, text):
         self._clear_product_cards()
+        columns = self._available_product_columns()
+        self._set_product_grid_columns(columns)
         message = QLabel(text)
         message.setObjectName("empty_products_label")
         message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.product_grid_layout.addWidget(message, 0, 0, 1, 2)
+        self.product_grid_layout.addWidget(
+            message, 0, 0, 1, columns
+        )
+
+    def _available_product_columns(self):
+        margins = self.product_grid_layout.contentsMargins()
+        spacing = self.product_grid_layout.horizontalSpacing()
+        available_width = (
+            self.product_cards_scroll.viewport().width()
+            - margins.left()
+            - margins.right()
+        )
+        columns = (available_width + spacing) // (180 + spacing)
+        return max(1, min(3, columns))
+
+    def _set_product_grid_columns(self, columns):
+        for column in range(3):
+            self.product_grid_layout.setColumnStretch(
+                column,
+                1 if column < columns else 0
+            )
 
     @staticmethod
     def _variant_description(product):
@@ -349,7 +375,11 @@ class SaleView(QWidget):
     def _create_product_card(self, product):
         card = QFrame()
         card.setObjectName("product_card")
-        card.setMinimumWidth(220)
+        card.setMinimumWidth(180)
+        card.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
 
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(12, 12, 12, 12)
@@ -359,7 +389,6 @@ class SaleView(QWidget):
         image_label.setObjectName("product_photo")
         image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image_label.setFixedHeight(132)
-        image_label.setMinimumWidth(190)
 
         image_path = self.product_service.resolve_product_image_path(
             product.get("image_path")
@@ -435,16 +464,22 @@ class SaleView(QWidget):
             )
             return
 
+        columns = self._available_product_columns()
+        self._set_product_grid_columns(columns)
+
         for index, product in enumerate(products):
-            row, column = divmod(index, 2)
-            column_span = 2 if len(products) == 1 else 1
+            row, column = divmod(index, columns)
             self.product_grid_layout.addWidget(
                 self._create_product_card(product),
                 row,
                 column,
-                1,
-                column_span
+                Qt.AlignmentFlag.AlignTop,
             )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._product_results:
+            self._render_product_cards(self._product_results)
 
     # ==========================================
     # ADD PRODUCT TO CART
@@ -728,8 +763,12 @@ class SaleView(QWidget):
             }
 
             QScrollArea#product_cards_scroll {
-                background-color: transparent;
+                background-color: #F5F8F6;
                 border: none;
+            }
+
+            QWidget#product_cards_container {
+                background-color: #F5F8F6;
             }
 
             QFrame#product_card {

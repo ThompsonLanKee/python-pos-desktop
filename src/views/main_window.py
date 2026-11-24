@@ -18,7 +18,7 @@ from src.views.sale_view import SaleView
 from src.views.product_view import ProductManagementView
 from src.views.user_management_view import UserManagementView
 from src.views.role_management_view import RoleManagementView
-
+from src.views.inventory_view import InventoryView
 
 class MainWindow(QMainWindow):
     """
@@ -122,6 +122,7 @@ class MainWindow(QMainWindow):
         user_management_service,
         role_management_service,
         product_service,
+        inventory_service
     ):
         super().__init__()
 
@@ -135,6 +136,7 @@ class MainWindow(QMainWindow):
         self.user_management_service = user_management_service
         self.role_management_service = role_management_service
         self.product_service = product_service
+        self.inventory_service = inventory_service
 
         # Current user's permissions
         self.permissions = (
@@ -281,6 +283,21 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(header)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        self.sidebar_toggle_button = QPushButton("☰")
+        self.sidebar_toggle_button.setObjectName(
+            "sidebar_toggle_button"
+        )
+        self.sidebar_toggle_button.setFixedSize(40, 40)
+        self.sidebar_toggle_button.setToolTip("Hide navigation")
+        self.sidebar_toggle_button.setAccessibleName(
+            "Hide navigation"
+        )
+        self.sidebar_toggle_button.clicked.connect(
+            self.toggle_sidebar
+        )
+        layout.addWidget(self.sidebar_toggle_button)
+        layout.addSpacing(12)
+
         # Page title and description
         title_container = QVBoxLayout()
 
@@ -309,6 +326,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.user_badge)
 
         return header
+
+    def toggle_sidebar(self):
+        """Hide or restore the navigation sidebar."""
+        show_sidebar = self.sidebar.isHidden()
+        self.sidebar.setVisible(show_sidebar)
+
+        action = "Hide" if show_sidebar else "Show"
+        accessible_name = f"{action} navigation"
+        self.sidebar_toggle_button.setToolTip(accessible_name)
+        self.sidebar_toggle_button.setAccessibleName(accessible_name)
 
     # ==========================================
     # RBAC NAVIGATION
@@ -400,6 +427,11 @@ class MainWindow(QMainWindow):
 
             return ProductManagementView(
                 product_service=self.product_service,
+            )
+            
+        if page_key == "inventory":
+            return InventoryView(
+                inventory_service=self.inventory_service
             )
 
         # User Management
@@ -781,6 +813,19 @@ class MainWindow(QMainWindow):
         }
 
         /* PAGE HEADER */
+
+        #sidebar_toggle_button {
+            background-color: #E4EEE7;
+            color: #315D40;
+            border: 1px solid #D5E1D8;
+            border-radius: 7px;
+            font-size: 18px;
+            padding: 0;
+        }
+
+        #sidebar_toggle_button:hover {
+            background-color: #D6EBDD;
+        }
 
         #page_title {
             font-size: 25px;

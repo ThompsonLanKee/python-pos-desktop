@@ -66,13 +66,19 @@ class InventoryRepository(BaseRepository):
             return dict(row) if row else None
 
     def get_all(self) -> list[dict]:
-        """Retrieve all inventory records."""
+        """Retrieve all inventory records with variant details."""
 
         query = """
             SELECT
                 i.*,
                 pv.sku,
-                p.product_name
+                pv.barcode,
+                pv.cost_price,
+                pv.selling_price,
+                p.product_name,
+                col.color_name,
+                col.hex_code,
+                sz.size_name
 
             FROM inventory i
 
@@ -82,17 +88,19 @@ class InventoryRepository(BaseRepository):
             INNER JOIN products p
                 ON pv.product_id = p.product_id
 
+            LEFT JOIN colors col
+                ON pv.color_id = col.color_id
+
+            LEFT JOIN sizes sz
+                ON pv.size_id = sz.size_id
+
             ORDER BY p.product_name, pv.sku
         """
 
         with self.connection() as connection:
-
             rows = connection.execute(query).fetchall()
 
-            return [
-                dict(row)
-                for row in rows
-            ]
+            return [dict(row) for row in rows]
 
     def get_low_stock(self) -> list[dict]:
         """Retrieve inventory at or below reorder level."""
@@ -101,7 +109,13 @@ class InventoryRepository(BaseRepository):
             SELECT
                 i.*,
                 pv.sku,
-                p.product_name
+                pv.barcode,
+                pv.cost_price,
+                pv.selling_price,
+                p.product_name,
+                col.color_name,
+                col.hex_code,
+                sz.size_name
 
             FROM inventory i
 
@@ -111,19 +125,21 @@ class InventoryRepository(BaseRepository):
             INNER JOIN products p
                 ON pv.product_id = p.product_id
 
+            LEFT JOIN colors col
+                ON pv.color_id = col.color_id
+
+            LEFT JOIN sizes sz
+                ON pv.size_id = sz.size_id
+
             WHERE i.quantity_on_hand <= i.reorder_level
 
-            ORDER BY i.quantity_on_hand
+            ORDER BY i.quantity_on_hand, p.product_name
         """
 
         with self.connection() as connection:
-
             rows = connection.execute(query).fetchall()
 
-            return [
-                dict(row)
-                for row in rows
-            ]
+            return [dict(row) for row in rows]
 
     # ==========================================
     # UPDATE
