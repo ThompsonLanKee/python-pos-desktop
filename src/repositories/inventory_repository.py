@@ -73,6 +73,7 @@ class InventoryRepository(BaseRepository):
             i.*,
             pv.sku,
             pv.barcode,
+            pv.is_active,
             pv.cost_price,
             pv.selling_price,
             p.product_name,

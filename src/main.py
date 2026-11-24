@@ -53,6 +53,7 @@ def main():
     user_repository = UserRepository(database)
     permission_repository = PermissionRepository(database)
     role_repository = RoleRepository(database)
+    inventory_service = InventoryService(database)
     
 
     # ==========================================

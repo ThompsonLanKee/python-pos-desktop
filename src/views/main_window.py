@@ -20,6 +20,7 @@ from src.views.user_management_view import UserManagementView
 from src.views.role_management_view import RoleManagementView
 from src.views.inventory_view import InventoryView
 
+
 class MainWindow(QMainWindow):
     """
     Main application window.

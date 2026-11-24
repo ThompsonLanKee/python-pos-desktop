@@ -167,7 +167,7 @@ class InventoryService:
         return self._change_stock(
             variant_id,
             -quantity,
-            "SALE",
+            "ADJUSTMENT_OUT",
             reference_type,
             reference_id,
             notes

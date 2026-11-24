@@ -3,8 +3,8 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QLineEdit, QComboBox,
+    QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QPushButton, QLineEdit, QComboBox, QSizePolicy,
     QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QDialog, QFormLayout,
     QSpinBox, QPlainTextEdit, QMessageBox, QTabWidget,
@@ -13,6 +13,11 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtGui import QColor, QBrush
+from PySide6.QtCharts import (
+    QBarCategoryAxis, QBarSeries, QBarSet, QChart, QChartView,
+    QPieSeries, QValueAxis
+)
+from PySide6.QtGui import QPainter
 
 
 STYLE = """
@@ -230,13 +235,17 @@ class InventoryView(QWidget):
 
         self._build_ui()
         self.load_inventory()
+        self.load_dashboard()
         
         
     def _on_tab_changed(self, index):
-        if index == 1:
-            self.load_transactions()
+        if index == 0:
+            self.load_dashboard()
 
         elif index == 2:
+            self.load_transactions()
+
+        elif index == 3:
             self.load_reports()
             self.reports_scroll.verticalScrollBar().setValue(0)
 
@@ -313,6 +322,10 @@ class InventoryView(QWidget):
                 f"Potential Sales Value: {total_sales_value:,.2f} MMK\n"
                 f"Potential Gross Margin: {potential_margin:,.2f} MMK"
             )
+            self.report_units_value.setText(f"{total_units:,}")
+            self.report_cost_value.setText(f"{total_cost_value:,.2f} MMK")
+            self.report_sales_value.setText(f"{total_sales_value:,.2f} MMK")
+            self.report_margin_value.setText(f"{potential_margin:,.2f} MMK")
 
             categories = sorted(category_totals.items())
             self.category_report_table.setRowCount(len(categories))
@@ -339,6 +352,10 @@ class InventoryView(QWidget):
                 self.report_movement_summary.setText(
                     "Invalid movement date range: start date is after end date."
                 )
+                self.report_movement_transactions.setText("0")
+                self.report_movement_in.setText("0")
+                self.report_movement_out.setText("0")
+                self.report_movement_net.setText("0")
                 return
 
             transactions = self.inventory_service.get_all_transactions()
@@ -364,11 +381,14 @@ class InventoryView(QWidget):
                 elif change < 0:
                     issued += abs(change)
 
+            self.report_movement_transactions.setText(f"{matching_count:,}")
+            self.report_movement_in.setText(f"+{received:,}")
+            self.report_movement_out.setText(f"-{issued:,}")
+            self.report_movement_net.setText(f"{net_change:+,}")
             self.report_movement_summary.setText(
-                f"Movement summary ({start_date} to {end_date})\n"
-                f"Transactions: {matching_count:,}    "
-                f"Stock In: +{received:,}    "
-                f"Stock Out: -{issued:,}    "
+                f"Transactions: {matching_count:,} | "
+                f"Stock In: +{received:,} | "
+                f"Stock Out: -{issued:,} | "
                 f"Net Movement: {net_change:+,}"
             )
 
@@ -396,24 +416,10 @@ class InventoryView(QWidget):
         description.setStyleSheet("color: #829087;")
         root.addWidget(description)
 
-        # Summary cards
-        cards = QGridLayout()
-        cards.setSpacing(12)
-
-        self.total_label = self._create_card(
-            cards, 0, "Inventory Items"
-        )
-        self.low_label = self._create_card(
-            cards, 1, "Low Stock"
-        )
-        self.out_label = self._create_card(
-            cards, 2, "Out of Stock"
-        )
-
-        root.addLayout(cards)
-
         self.tabs = QTabWidget()
         root.addWidget(self.tabs)
+
+        self._build_dashboard_tab()
 
         # Stock overview
         overview = QWidget()
@@ -435,6 +441,7 @@ class InventoryView(QWidget):
 
         self.filter_combo = QComboBox()
         self.filter_combo.addItem("All Stock", "all")
+        self.filter_combo.addItem("In Stock", "in")
         self.filter_combo.addItem("Low Stock", "low")
         self.filter_combo.addItem("Out of Stock", "out")
         self.filter_combo.currentIndexChanged.connect(
@@ -607,63 +614,221 @@ class InventoryView(QWidget):
             "#reports_content { background: #F5F8F6; }"
         )
         reports_layout_inner = QVBoxLayout(reports_content)
-        reports_layout_inner.setContentsMargins(0, 0, 4, 0)
+        reports_layout_inner.setContentsMargins(16, 14, 16, 16)
         reports_layout_inner.setSpacing(12)
         reports_scroll.setWidget(reports_content)
         reports_layout.addWidget(reports_scroll)
 
         report_heading = QLabel("Inventory Valuation")
         report_heading.setStyleSheet(
-            "font-size: 18px; font-weight: 700; color: #203D2E;"
+            "font-size: 20px; font-weight: 700; color: #203D2E;"
         )
-
         report_description = QLabel(
             "View current stock quantities and estimated inventory values."
         )
+        report_description.setStyleSheet("color: #718078;")
+        report_title_layout = QVBoxLayout()
+        report_title_layout.setSpacing(2)
+        report_title_layout.addWidget(report_heading)
+        report_title_layout.addWidget(report_description)
+        reports_layout_inner.addLayout(report_title_layout)
 
-        reports_layout_inner.addWidget(report_heading)
-        reports_layout_inner.addWidget(report_description)
-
-        report_filters = QGridLayout()
         self.report_start_date = QDateEdit()
         self.report_start_date.setCalendarPopup(True)
         self.report_start_date.setDisplayFormat("yyyy-MM-dd")
         self.report_start_date.setDate(QDate.currentDate().addMonths(-1))
-        self.report_start_date.setMinimumWidth(125)
+        self.report_start_date.setFixedWidth(155)
+        self.report_start_date.setFixedHeight(38)
+        self.report_start_date.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed
+        )
         self._configure_date_edit(self.report_start_date)
+        self.report_start_date.setFixedWidth(155)
+        self.report_start_date.setFixedHeight(38)
 
         self.report_end_date = QDateEdit()
         self.report_end_date.setCalendarPopup(True)
         self.report_end_date.setDisplayFormat("yyyy-MM-dd")
         self.report_end_date.setDate(QDate.currentDate())
-        self.report_end_date.setMinimumWidth(125)
+        self.report_end_date.setFixedWidth(155)
+        self.report_end_date.setFixedHeight(38)
+        self.report_end_date.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed
+        )
         self._configure_date_edit(self.report_end_date)
+        self.report_end_date.setFixedWidth(155)
+        self.report_end_date.setFixedHeight(38)
 
-        report_filters.addWidget(QLabel("Movement From:"), 0, 0)
-        report_filters.addWidget(self.report_start_date, 0, 1)
-        report_filters.addWidget(QLabel("To:"), 0, 2)
-        report_filters.addWidget(self.report_end_date, 0, 3)
+        report_filters_panel = QFrame()
+        report_filters_panel.setStyleSheet("""
+            QFrame {
+                background: #FFFFFF;
+                border: 1px solid #DCE5DE;
+                border-radius: 8px;
+            }
+        """)
+        report_filters = QHBoxLayout(report_filters_panel)
+        report_filters.setContentsMargins(12, 10, 12, 10)
+        report_filters.addStretch()
+
+        report_refresh = QPushButton("Refresh Reports")
+        report_refresh.clicked.connect(self.load_reports)
+        export_report_excel = QPushButton("Export Excel")
+        export_report_excel.setObjectName("primary")
+        export_report_excel.clicked.connect(self.export_valuation_excel)
+        export_report_pdf = QPushButton("Export PDF")
+        export_report_pdf.clicked.connect(self.export_valuation_pdf)
+        report_filters.addWidget(report_refresh)
+        report_filters.addWidget(export_report_excel)
+        report_filters.addWidget(export_report_pdf)
+        reports_layout_inner.addWidget(report_filters_panel)
+
+        report_metrics = QGridLayout()
+        report_metrics.setSpacing(10)
+        report_metrics_card_data = [
+            ("Total Units", "#315F43"),
+            ("Stock Cost Value", "#54785F"),
+            ("Potential Sales Value", "#4F7F97"),
+            ("Potential Gross Margin", "#8A6B3E"),
+        ]
+        report_metric_values = []
+        for column, (title, accent) in enumerate(report_metrics_card_data):
+            card = QFrame()
+            card.setMinimumHeight(96)
+            card.setStyleSheet(f"""
+                QFrame {{
+                    background: #FFFFFF;
+                    border: 1px solid #DCE5DE;
+                    border-left: 4px solid {accent};
+                    border-radius: 8px;
+                }}
+            """)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(12, 10, 12, 10)
+            title_label = QLabel(title)
+            title_label.setStyleSheet(
+                "color: #718078; border: none; background: transparent;"
+            )
+            value_label = QLabel("0")
+            value_label.setStyleSheet(
+                f"font-size: 20px; font-weight: 700; color: {accent}; "
+                "border: none; background: transparent;"
+            )
+            card_layout.addWidget(title_label)
+            card_layout.addWidget(value_label)
+            card_layout.addStretch()
+            report_metrics.addWidget(card, 0, column)
+            report_metrics.setColumnStretch(column, 1)
+            report_metric_values.append(value_label)
+
+        (
+            self.report_units_value,
+            self.report_cost_value,
+            self.report_sales_value,
+            self.report_margin_value,
+        ) = report_metric_values
+
+        self.report_summary = QLabel()
+        self.report_summary.setVisible(False)
+        reports_layout_inner.addLayout(report_metrics)
+
+        movement_panel = QFrame()
+        movement_panel.setStyleSheet("""
+            QFrame {
+                background: #FFFFFF;
+                border: 1px solid #DCE5DE;
+                border-radius: 8px;
+            }
+        """)
+        movement_layout = QVBoxLayout(movement_panel)
+        movement_layout.setContentsMargins(12, 10, 12, 12)
+        movement_layout.setSpacing(8)
+        movement_header = QHBoxLayout()
+        movement_heading = QLabel("Stock Movement")
+        movement_heading.setStyleSheet(
+            "font-size: 15px; font-weight: 700; color: #203D2E;"
+        )
+        movement_header.addWidget(movement_heading)
+        movement_header.addStretch()
+        movement_layout.addLayout(movement_header)
+
+        movement_period_layout = QHBoxLayout()
+        movement_period_layout.setSpacing(8)
+        movement_period_label = QLabel("Movement period")
+        movement_period_label.setStyleSheet(
+            "font-weight: 700; border: none; background: transparent;"
+        )
+        movement_period_layout.addWidget(movement_period_label)
+        movement_period_layout.addSpacing(8)
+        for label_text, date_edit in (
+            ("From date", self.report_start_date),
+            ("To date", self.report_end_date),
+        ):
+            date_field = QVBoxLayout()
+            date_field.setSpacing(3)
+            field_label = QLabel(label_text)
+            field_label.setStyleSheet(
+                "font-size: 11px; color: #718078; border: none; "
+                "background: transparent;"
+            )
+            date_field.addWidget(field_label)
+            date_field.addWidget(date_edit)
+            movement_period_layout.addLayout(date_field)
+        movement_period_layout.addStretch()
+        movement_layout.addLayout(movement_period_layout)
+
+        movement_metrics = QGridLayout()
+        movement_metrics.setSpacing(8)
+        movement_card_values = []
+        movement_card_data = [
+            ("Transactions", "#315F43"),
+            ("Stock In", "#4F7F97"),
+            ("Stock Out", "#A66A45"),
+            ("Net Movement", "#8A6B3E"),
+        ]
+        for column, (title, accent) in enumerate(movement_card_data):
+            card = QFrame()
+            card.setStyleSheet(f"""
+                QFrame {{
+                    background: #F8FAF8;
+                    border: 1px solid #E1E7E2;
+                    border-left: 3px solid {accent};
+                    border-radius: 7px;
+                }}
+            """)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 7, 10, 7)
+            card_layout.setSpacing(2)
+            title_label = QLabel(title)
+            title_label.setStyleSheet(
+                "color: #718078; border: none; background: transparent;"
+            )
+            value_label = QLabel("0")
+            value_label.setStyleSheet(
+                f"font-size: 16px; font-weight: 700; color: {accent}; "
+                "border: none; background: transparent;"
+            )
+            card_layout.addWidget(title_label)
+            card_layout.addWidget(value_label)
+            movement_metrics.addWidget(card, 0, column)
+            movement_metrics.setColumnStretch(column, 1)
+            movement_card_values.append(value_label)
+
+        (
+            self.report_movement_transactions,
+            self.report_movement_in,
+            self.report_movement_out,
+            self.report_movement_net,
+        ) = movement_card_values
+        movement_layout.addLayout(movement_metrics)
 
         self.report_movement_summary = QLabel(
             "Movement totals for the selected date range will appear here."
         )
-        self.report_movement_summary.setStyleSheet(
-            "background: #F5F8F6; border: 1px solid #DCE5DE; "
-            "border-radius: 7px; padding: 10px; color: #203D2E;"
-        )
-        report_filters.addWidget(self.report_movement_summary, 1, 0, 1, 4)
-        reports_layout_inner.addLayout(report_filters)
-
-        self.report_summary = QLabel()
-        self.report_summary.setStyleSheet("""
-            background: #EAF1EC;
-            border: 1px solid #DCE5DE;
-            border-radius: 8px;
-            padding: 15px;
-            font-size: 14px;
-            color: #203D2E;
-        """)
-        reports_layout_inner.addWidget(self.report_summary)
+        self.report_movement_summary.setVisible(False)
+        reports_layout_inner.addWidget(movement_panel)
 
         self.report_table = self._create_table([
             "Category",
@@ -675,22 +840,24 @@ class InventoryView(QWidget):
             "Stock Cost Value",
             "Potential Sales Value"
         ])
-
-        reports_layout_inner.addWidget(self.report_table)
-        self.report_table.setMinimumHeight(220)
-        self.report_table.setMaximumHeight(260)
-
-        report_buttons = QHBoxLayout()
-
-        report_refresh = QPushButton("Refresh Reports")
-        report_refresh.clicked.connect(self.load_reports)
-
-        export_report_excel = QPushButton("Export Excel")
-        export_report_excel.setObjectName("primary")
-        export_report_excel.clicked.connect(self.export_valuation_excel)
-
-        export_report_pdf = QPushButton("Export PDF")
-        export_report_pdf.clicked.connect(self.export_valuation_pdf)
+        valuation_panel = QFrame()
+        valuation_panel.setStyleSheet("""
+            QFrame {
+                background: #FFFFFF;
+                border: 1px solid #DCE5DE;
+                border-radius: 8px;
+            }
+        """)
+        valuation_layout = QVBoxLayout(valuation_panel)
+        valuation_layout.setContentsMargins(10, 10, 10, 10)
+        valuation_heading = QLabel("Current Stock Valuation")
+        valuation_heading.setStyleSheet(
+            "font-size: 15px; font-weight: 700; color: #203D2E;"
+        )
+        valuation_layout.addWidget(valuation_heading)
+        valuation_layout.addWidget(self.report_table, 1)
+        self.report_table.setMinimumHeight(250)
+        reports_layout_inner.addWidget(valuation_panel, 1)
 
         self.report_start_date.dateChanged.connect(
             self._on_report_start_changed
@@ -699,12 +866,6 @@ class InventoryView(QWidget):
             self._on_report_end_changed
         )
 
-        report_buttons.addWidget(report_refresh)
-        report_buttons.addStretch()
-        report_buttons.addWidget(export_report_excel)
-        report_buttons.addWidget(export_report_pdf)
-        reports_layout_inner.addLayout(report_buttons)
-
         self.category_report_table = self._create_table([
             "Category",
             "Total Units",
@@ -712,10 +873,24 @@ class InventoryView(QWidget):
             "Potential Sales Value",
             "Potential Gross Margin"
         ])
-        reports_layout_inner.addWidget(QLabel("Valuation by Category"))
-        reports_layout_inner.addWidget(self.category_report_table)
-        self.category_report_table.setMinimumHeight(150)
-        self.category_report_table.setMaximumHeight(240)
+        category_panel = QFrame()
+        category_panel.setStyleSheet("""
+            QFrame {
+                background: #FFFFFF;
+                border: 1px solid #DCE5DE;
+                border-radius: 8px;
+            }
+        """)
+        category_layout = QVBoxLayout(category_panel)
+        category_layout.setContentsMargins(10, 10, 10, 10)
+        category_heading = QLabel("Valuation by Category")
+        category_heading.setStyleSheet(
+            "font-size: 15px; font-weight: 700; color: #203D2E;"
+        )
+        category_layout.addWidget(category_heading)
+        category_layout.addWidget(self.category_report_table)
+        self.category_report_table.setMinimumHeight(170)
+        reports_layout_inner.addWidget(category_panel)
 
         self.tabs.addTab(reports, "Inventory Reports")
         
@@ -723,9 +898,567 @@ class InventoryView(QWidget):
         self._on_tab_changed
         )
 
+    def _build_dashboard_tab(self):
+        dashboard = QWidget()
+        dashboard_layout = QVBoxLayout(dashboard)
+        dashboard_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.dashboard_scroll = QScrollArea()
+        self.dashboard_scroll.setWidgetResizable(True)
+        self.dashboard_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.dashboard_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.dashboard_scroll.setStyleSheet(
+            "QScrollArea { background: #F5F8F6; border: none; }"
+        )
+        dashboard_content = QWidget()
+        dashboard_content.setStyleSheet("background: #F5F8F6;")
+        content_layout = QVBoxLayout(dashboard_content)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout.setSpacing(12)
+        self.dashboard_scroll.setWidget(dashboard_content)
+        dashboard_layout.addWidget(self.dashboard_scroll)
+
+        kpi_grid = QGridLayout()
+        kpi_grid.setSpacing(10)
+        self.dashboard_total_items = self._create_dashboard_kpi(
+            kpi_grid, 0, "▣", "Total Items", "#315F43"
+        )
+        self.dashboard_total_units = self._create_dashboard_kpi(
+            kpi_grid, 1, "▤", "Total Units", "#276A8A"
+        )
+        self.dashboard_low_stock = self._create_dashboard_kpi(
+            kpi_grid, 2, "!", "Low Stock", "#A66B00"
+        )
+        self.dashboard_out_of_stock = self._create_dashboard_kpi(
+            kpi_grid, 3, "×", "Out of Stock", "#B42318"
+        )
+        content_layout.addLayout(kpi_grid)
+
+        charts_grid = QGridLayout()
+        charts_grid.setSpacing(12)
+
+        health_panel, health_layout = self._create_dashboard_panel(
+            "Stock Health"
+        )
+        self.stock_health_chart = QChart()
+        self.stock_health_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
+        self.stock_health_chart.legend().setAlignment(
+            Qt.AlignmentFlag.AlignBottom
+        )
+        self.stock_health_chart_view = QChartView(self.stock_health_chart)
+        self.stock_health_chart_view.setRenderHint(
+            QPainter.RenderHint.Antialiasing
+        )
+        self.stock_health_chart_view.setMinimumWidth(0)
+        self.stock_health_chart_view.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Expanding
+        )
+        self.stock_health_chart_view.setMinimumHeight(235)
+        health_layout.addWidget(self.stock_health_chart_view, 1)
+
+        self.stock_status_buttons = QVBoxLayout()
+        self.stock_status_buttons.setSpacing(4)
+        health_layout.addLayout(self.stock_status_buttons)
+        charts_grid.addWidget(health_panel, 0, 0)
+
+        movement_panel, movement_layout = self._create_dashboard_panel(
+            "Inventory Movement Trends"
+        )
+        movement_toolbar = QGridLayout()
+        self.movement_granularity = QComboBox()
+        self.movement_granularity.addItem("Daily", "daily")
+        self.movement_granularity.addItem("Weekly", "weekly")
+        self.movement_granularity.addItem("Monthly", "monthly")
+        self.movement_granularity.currentIndexChanged.connect(
+            self._update_movement_chart
+        )
+
+        self.dashboard_start_date = QDateEdit()
+        self.dashboard_start_date.setCalendarPopup(True)
+        self.dashboard_start_date.setDisplayFormat("yyyy-MM-dd")
+        self.dashboard_start_date.setDate(QDate.currentDate().addDays(-29))
+        self._configure_date_edit(self.dashboard_start_date)
+        self.dashboard_start_date.dateChanged.connect(
+            self._on_dashboard_start_changed
+        )
+
+        self.dashboard_end_date = QDateEdit()
+        self.dashboard_end_date.setCalendarPopup(True)
+        self.dashboard_end_date.setDisplayFormat("yyyy-MM-dd")
+        self.dashboard_end_date.setDate(QDate.currentDate())
+        self._configure_date_edit(self.dashboard_end_date)
+        self.dashboard_end_date.dateChanged.connect(
+            self._on_dashboard_end_changed
+        )
+
+        movement_toolbar.addWidget(QLabel("View:"), 0, 0)
+        movement_toolbar.addWidget(self.movement_granularity, 0, 1)
+        movement_toolbar.addWidget(QLabel("From:"), 1, 0)
+        movement_toolbar.addWidget(self.dashboard_start_date, 1, 1)
+        movement_toolbar.addWidget(QLabel("To:"), 1, 2)
+        movement_toolbar.addWidget(self.dashboard_end_date, 1, 3)
+        movement_layout.addLayout(movement_toolbar)
+
+        self.movement_totals_label = QLabel()
+        self.movement_totals_label.setWordWrap(True)
+        self.movement_totals_label.setStyleSheet(
+            "color: #53645A; padding: 2px 0;"
+        )
+        movement_layout.addWidget(self.movement_totals_label)
+
+        self.movement_chart = QChart()
+        self.movement_chart.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
+        self.movement_chart.legend().setAlignment(
+            Qt.AlignmentFlag.AlignBottom
+        )
+        self.movement_chart_view = QChartView(self.movement_chart)
+        self.movement_chart_view.setRenderHint(
+            QPainter.RenderHint.Antialiasing
+        )
+        self.movement_chart_view.setMinimumWidth(0)
+        self.movement_chart_view.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Expanding
+        )
+        self.movement_chart_view.setMinimumHeight(235)
+        movement_layout.addWidget(self.movement_chart_view, 1)
+        charts_grid.addWidget(movement_panel, 0, 1)
+        charts_grid.setColumnStretch(0, 1)
+        charts_grid.setColumnStretch(1, 1)
+        content_layout.addLayout(charts_grid)
+
+        bottom_grid = QGridLayout()
+        bottom_grid.setSpacing(12)
+
+        alerts_panel, self.low_stock_alerts_layout = (
+            self._create_dashboard_panel("Low Stock Alerts")
+        )
+        self.low_stock_alerts_layout.setSpacing(7)
+        bottom_grid.addWidget(alerts_panel, 0, 0)
+
+        actions_panel, actions_layout = self._create_dashboard_panel(
+            "Quick Actions"
+        )
+        action_buttons = [
+            ("Receive Stock", lambda: self._start_dashboard_movement("receive")),
+            ("Adjust Stock", lambda: self._start_dashboard_movement("adjust")),
+            ("Record Damaged Items", lambda: self._start_dashboard_movement("damage")),
+            ("View Movement History", lambda: self.tabs.setCurrentIndex(2)),
+            ("Export Inventory Report", self.export_valuation_excel),
+        ]
+        for label, callback in action_buttons:
+            button = QPushButton(label)
+            button.clicked.connect(callback)
+            actions_layout.addWidget(button)
+        actions_layout.addStretch()
+        bottom_grid.addWidget(actions_panel, 0, 1)
+        bottom_grid.setColumnStretch(0, 3)
+        bottom_grid.setColumnStretch(1, 2)
+        content_layout.addLayout(bottom_grid)
+
+        self.tabs.addTab(dashboard, "Dashboard")
+
+    @staticmethod
+    def _create_dashboard_panel(title):
+        panel = QFrame()
+        panel.setStyleSheet("""
+            QFrame {
+                background: #FFFFFF;
+                border: 1px solid #DCE5DE;
+                border-radius: 8px;
+            }
+        """)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
+        heading = QLabel(title)
+        heading.setStyleSheet(
+            "font-size: 15px; font-weight: 700; color: #203D2E; "
+            "border: none; background: transparent;"
+        )
+        heading.setWordWrap(True)
+        layout.addWidget(heading)
+        return panel, layout
+
+    @staticmethod
+    def _create_dashboard_kpi(grid, column, icon, title, accent):
+        card = QFrame()
+        card.setMinimumHeight(92)
+        card.setStyleSheet(f"""
+            QFrame {{
+                background: #FFFFFF;
+                border: 1px solid #DCE5DE;
+                border-left: 4px solid {accent};
+                border-radius: 8px;
+            }}
+        """)
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(12, 8, 12, 8)
+        icon_label = QLabel(icon)
+        icon_label.setStyleSheet(
+            f"font-size: 24px; font-weight: 700; color: {accent}; "
+            "border: none; background: transparent;"
+        )
+        layout.addWidget(icon_label)
+        text_layout = QVBoxLayout()
+        title_label = QLabel(title)
+        title_label.setStyleSheet(
+            "color: #718078; border: none; background: transparent;"
+        )
+        value_label = QLabel("0")
+        value_label.setStyleSheet(
+            f"font-size: 23px; font-weight: 700; color: {accent}; "
+            "border: none; background: transparent;"
+        )
+        text_layout.addWidget(title_label)
+        text_layout.addWidget(value_label)
+        layout.addLayout(text_layout, 1)
+        grid.addWidget(card, 0, column)
+        return value_label
+
+    def load_dashboard(self):
+        try:
+            self.inventory = self.inventory_service.get_all_inventory()
+            self.transactions = self.inventory_service.get_all_transactions()
+            active_inventory = [
+                item for item in self.inventory
+                if item.get("is_active", 1)
+            ]
+            total_units = sum(
+                int(item.get("quantity_on_hand") or 0)
+                for item in active_inventory
+            )
+            out_count = sum(
+                int(item.get("quantity_on_hand") or 0) == 0
+                for item in active_inventory
+            )
+            low_count = sum(
+                0 < int(item.get("quantity_on_hand") or 0)
+                <= int(item.get("reorder_level") or 0)
+                for item in active_inventory
+            )
+
+            self.dashboard_total_items.setText(str(len(active_inventory)))
+            self.dashboard_total_units.setText(f"{total_units:,}")
+            self.dashboard_low_stock.setText(str(low_count))
+            self.dashboard_out_of_stock.setText(str(out_count))
+
+            self._update_stock_health(active_inventory)
+            self._update_low_stock_alerts(active_inventory)
+            self._update_movement_chart()
+        except Exception as exc:
+            self._show_message(
+                QMessageBox.Icon.Critical,
+                "Dashboard Error",
+                f"Unable to load inventory dashboard:\n{exc}"
+            )
+
+    def _update_stock_health(self, inventory):
+        counts = {
+            "In Stock": 0,
+            "Low Stock": 0,
+            "Out of Stock": 0,
+        }
+        for item in inventory:
+            quantity = int(item.get("quantity_on_hand") or 0)
+            reorder = int(item.get("reorder_level") or 0)
+            if quantity == 0:
+                counts["Out of Stock"] += 1
+            elif quantity <= reorder:
+                counts["Low Stock"] += 1
+            else:
+                counts["In Stock"] += 1
+
+        total = len(inventory)
+        colors = {
+            "In Stock": "#3A8053",
+            "Low Stock": "#E2A72E",
+            "Out of Stock": "#C9473A",
+        }
+        self.stock_health_chart.removeAllSeries()
+        series = QPieSeries()
+        series.setHoleSize(0.52)
+        for status, count in counts.items():
+            percentage = count * 100 / total if total else 0
+            slice_item = series.append(
+                f"{status}: {count} ({percentage:.1f}%)", count
+            )
+            slice_item.setColor(QColor(colors[status]))
+            slice_item.setLabel(
+                f"{status}\n{count} ({percentage:.1f}%)"
+            )
+            slice_item.setLabelVisible(count > 0)
+            slice_item.clicked.connect(
+                lambda *_, current=status:
+                    self._filter_inventory_status(current)
+            )
+        self.stock_health_chart.addSeries(series)
+        self.stock_health_chart.setTitle("Inventory Status")
+
+        while self.stock_status_buttons.count():
+            item = self.stock_status_buttons.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        for status in counts:
+            percentage = counts[status] * 100 / total if total else 0
+            status_row = QWidget()
+            status_row.setStyleSheet(
+                "background: transparent; border: none;"
+            )
+            status_row_layout = QHBoxLayout(status_row)
+            status_row_layout.setContentsMargins(0, 0, 0, 0)
+            status_row_layout.setSpacing(8)
+
+            button = QPushButton(status)
+            button.setStyleSheet(
+                f"QPushButton {{ color: {colors[status]}; "
+                "font-weight: 600; }}"
+            )
+            button.setProperty("inventory_status", status)
+            button.clicked.connect(self._on_stock_status_clicked)
+            status_row_layout.addWidget(button)
+            status_row_layout.addStretch()
+
+            value = QLabel(
+                f"{counts[status]}  ({percentage:.1f}%)"
+            )
+            value.setAlignment(Qt.AlignmentFlag.AlignRight)
+            value.setStyleSheet("color: #53645A; background: transparent;")
+            status_row_layout.addWidget(value)
+            self.stock_status_buttons.addWidget(status_row)
+
+    def _on_stock_status_clicked(self):
+        button = self.sender()
+        if button is not None:
+            self._filter_inventory_status(
+                button.property("inventory_status")
+            )
+
+    def _filter_inventory_status(self, status):
+        filter_index = self.filter_combo.findData({
+            "In Stock": "in",
+            "Low Stock": "low",
+            "Out of Stock": "out",
+        }[status])
+        self.search_input.clear()
+        self.filter_combo.setCurrentIndex(filter_index)
+        self.tabs.setCurrentIndex(1)
+
+    def _update_low_stock_alerts(self, inventory):
+        while self.low_stock_alerts_layout.count() > 1:
+            item = self.low_stock_alerts_layout.takeAt(1)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        alerts = sorted(
+            (
+                item for item in inventory
+                if int(item.get("quantity_on_hand") or 0)
+                <= int(item.get("reorder_level") or 0)
+            ),
+            key=lambda item: (
+                int(item.get("quantity_on_hand") or 0),
+                item.get("product_name") or "",
+                item.get("sku") or "",
+            )
+        )
+        if not alerts:
+            label = QLabel("No items currently need replenishment.")
+            label.setStyleSheet("color: #718078; padding: 8px;")
+            self.low_stock_alerts_layout.addWidget(label)
+            return
+
+        for item in alerts[:6]:
+            quantity = int(item.get("quantity_on_hand") or 0)
+            reorder = int(item.get("reorder_level") or 0)
+            is_out = quantity == 0
+            alert = QFrame()
+            alert.setStyleSheet(
+                "QFrame { background: #FDE8E7; border: 1px solid #F3C6C3; "
+                "border-radius: 6px; }" if is_out else
+                "QFrame { background: #FFF6DF; border: 1px solid #F0D99C; "
+                "border-radius: 6px; }"
+            )
+            row_layout = QHBoxLayout(alert)
+            row_layout.setContentsMargins(8, 6, 8, 6)
+            product_info = QVBoxLayout()
+            product = QLabel(str(item.get("product_name") or "Product"))
+            product.setTextFormat(Qt.TextFormat.PlainText)
+            product.setStyleSheet(
+                "font-weight: 600; border: none; background: transparent;"
+            )
+            sku = QLabel(f"SKU: {item.get('sku', '')}")
+            sku.setTextFormat(Qt.TextFormat.PlainText)
+            sku.setStyleSheet("border: none; background: transparent;")
+            product_info.addWidget(product)
+            product_info.addWidget(sku)
+            row_layout.addLayout(product_info, 1)
+            details = QLabel(
+                f"Qty: {quantity}  |  Reorder: {reorder}<br>"
+                f"<b>{'Out of Stock' if is_out else 'Low Stock'}</b>"
+            )
+            details.setAlignment(Qt.AlignmentFlag.AlignRight)
+            details.setStyleSheet(
+                f"color: {'#B42318' if is_out else '#8A5A00'}; "
+                "border: none; background: transparent;"
+            )
+            row_layout.addWidget(details)
+            self.low_stock_alerts_layout.addWidget(alert)
+
+    def _on_dashboard_start_changed(self):
+        start = self.dashboard_start_date.date()
+        if start > self.dashboard_end_date.date():
+            self.dashboard_end_date.setDate(start)
+        self._update_movement_chart()
+
+    def _on_dashboard_end_changed(self):
+        end = self.dashboard_end_date.date()
+        if end < self.dashboard_start_date.date():
+            self.dashboard_start_date.setDate(end)
+        self._update_movement_chart()
+
+    def _update_movement_chart(self, *_):
+        if not hasattr(self, "movement_chart"):
+            return
+
+        start = self.dashboard_start_date.date()
+        end = self.dashboard_end_date.date()
+        granularity = self.movement_granularity.currentData()
+        bucket_start = self._movement_bucket_start(start, granularity)
+        bucket_end = self._movement_bucket_start(end, granularity)
+        buckets = []
+        cursor = bucket_start
+        while cursor <= bucket_end:
+            buckets.append(cursor)
+            cursor = (
+                cursor.addDays(1) if granularity == "daily"
+                else cursor.addDays(7) if granularity == "weekly"
+                else cursor.addMonths(1)
+            )
+
+        incoming = {bucket.toString("yyyy-MM-dd"): 0 for bucket in buckets}
+        outgoing = {bucket.toString("yyyy-MM-dd"): 0 for bucket in buckets}
+        total_in = 0
+        total_out = 0
+        for transaction in self.transactions:
+            transaction_date = QDate.fromString(
+                str(transaction.get("created_at") or "")[:10],
+                Qt.DateFormat.ISODate
+            )
+            if not transaction_date.isValid() or not (
+                start <= transaction_date <= end
+            ):
+                continue
+            bucket = self._movement_bucket_start(
+                transaction_date, granularity
+            ).toString("yyyy-MM-dd")
+            quantity_change = int(transaction.get("quantity_change") or 0)
+            if quantity_change > 0:
+                incoming[bucket] += quantity_change
+                total_in += quantity_change
+            elif quantity_change < 0:
+                outgoing[bucket] += abs(quantity_change)
+                total_out += abs(quantity_change)
+
+        labels = [
+            bucket.toString(
+                "MMM d" if granularity != "monthly" else "MMM yyyy"
+            )
+            for bucket in buckets
+        ]
+        self.movement_chart.removeAllSeries()
+        for axis in self.movement_chart.axes():
+            self.movement_chart.removeAxis(axis)
+
+        stock_in = QBarSet("Stock In")
+        stock_in.setColor(QColor("#3A8053"))
+        stock_out = QBarSet("Stock Out")
+        stock_out.setColor(QColor("#C9473A"))
+        for bucket in buckets:
+            key = bucket.toString("yyyy-MM-dd")
+            stock_in.append(incoming[key])
+            stock_out.append(outgoing[key])
+
+        series = QBarSeries()
+        series.append(stock_in)
+        series.append(stock_out)
+        self.movement_chart.addSeries(series)
+        axis_x = QBarCategoryAxis()
+        axis_x.append(labels or ["No data"])
+        axis_y = QValueAxis()
+        axis_y.setMin(0)
+        axis_y.setMax(max(
+            max(incoming.values(), default=0),
+            max(outgoing.values(), default=0),
+            1
+        ))
+        self.movement_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        self.movement_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_x)
+        series.attachAxis(axis_y)
+        self.movement_chart.setTitle(
+            f"Stock In and Stock Out ({granularity.title()})"
+        )
+        self.movement_totals_label.setText(
+            f"Incoming: +{total_in:,}    Outgoing: -{total_out:,}    "
+            f"Net Movement: {total_in - total_out:+,}"
+        )
+
+    @staticmethod
+    def _movement_bucket_start(date, granularity):
+        if granularity == "weekly":
+            return date.addDays(1 - date.dayOfWeek())
+        if granularity == "monthly":
+            return QDate(date.year(), date.month(), 1)
+        return date
+
+    def _start_dashboard_movement(self, action):
+        inventory = [
+            item for item in self.inventory
+            if item.get("is_active", 1)
+        ]
+        if not inventory:
+            self._show_message(
+                QMessageBox.Icon.Information,
+                "No Inventory",
+                "Create an active product variant before recording stock."
+            )
+            return
+
+        choices = [
+            f"{item.get('product_name', 'Product')} — {item.get('sku', '')} "
+            f"(Qty: {int(item.get('quantity_on_hand') or 0)})"
+            for item in inventory
+        ]
+        choice, accepted = QInputDialog.getItem(
+            self,
+            "Select Inventory Item",
+            "Choose the product variant:",
+            choices,
+            0,
+            False
+        )
+        if not accepted:
+            return
+        self.tabs.setCurrentIndex(1)
+        self.perform_movement(
+            action,
+            inventory[choices.index(choice)]
+        )
+
     @staticmethod
     def _configure_date_edit(date_edit):
         date_edit.setMinimumWidth(125)
+        date_edit.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Fixed
+        )
         date_edit.setStyleSheet("""
             QDateEdit {
                 background: white;
@@ -927,25 +1660,15 @@ class InventoryView(QWidget):
                 ):
                     continue
 
+                if filter_type == "in" and not (
+                    quantity > 0 and quantity > reorder
+                ):
+                    continue
+
                 if filter_type == "out" and quantity != 0:
                     continue
 
                 rows.append(item)
-
-            low_count = sum(
-                1 for item in self.inventory
-                if 0 < int(item.get("quantity_on_hand") or 0)
-                <= int(item.get("reorder_level") or 0)
-            )
-
-            out_count = sum(
-                1 for item in self.inventory
-                if int(item.get("quantity_on_hand") or 0) == 0
-            )
-
-            self.total_label.setText(str(len(self.inventory)))
-            self.low_label.setText(str(low_count))
-            self.out_label.setText(str(out_count))
 
             self.stock_table.setRowCount(len(rows))
 
@@ -1023,6 +1746,11 @@ class InventoryView(QWidget):
 
             if filter_type == "low" and not (
                 quantity > 0 and quantity <= reorder
+            ):
+                continue
+
+            if filter_type == "in" and not (
+                quantity > 0 and quantity > reorder
             ):
                 continue
 
@@ -1169,8 +1897,9 @@ class InventoryView(QWidget):
             None
         )
 
-    def perform_movement(self, action):
-        item = self._selected_item()
+    def perform_movement(self, action, item=None):
+        if item is None:
+            item = self._selected_item()
 
         if not item:
             return
@@ -1193,6 +1922,7 @@ class InventoryView(QWidget):
         quantity = data["quantity"]
         notes = data["notes"]
         variant_id = item["variant_id"]
+        reduces_stock = action in ("issue", "damage")
 
         try:
             if action == "receive":
@@ -1211,6 +1941,7 @@ class InventoryView(QWidget):
                     return
 
                 change = quantity if direction == "in" else -quantity
+                reduces_stock = direction == "out"
 
                 result = self.inventory_service.adjust_stock(
                     variant_id, change, notes=notes
@@ -1227,14 +1958,51 @@ class InventoryView(QWidget):
                     "Success",
                     "Inventory movement recorded successfully."
                 )
+                self.refresh_all()
+            else:
+           
+                
+                current = next(
+                    (
+                        row for row in self.inventory_service.get_all_inventory()
+                        if int(row.get("variant_id") or 0) == int(variant_id)
+                    ),
+                    item
+                )
 
-            self.refresh_all()
+                available = int(current.get("quantity_on_hand") or 0)                
+                                
+                
+                if reduces_stock and quantity > available:
+                    message = (
+                        f"Cannot remove {quantity:,} unit(s). "
+                        f"Only {available:,} unit(s) are currently available. "
+                        "No stock was changed."
+                    )
+                else:
+                    message = (
+                        "The stock movement was rejected. "
+                        f"Current available quantity: {available:,}. "
+                        "No stock was changed."
+                    )
+                self._show_message(
+                    QMessageBox.Icon.Warning,
+                    "Stock Movement Rejected",
+                    message
+                )
 
-        except Exception as exc:
+        except ValueError as e:
             self._show_message(
                 QMessageBox.Icon.Warning,
-                "Movement Failed",
-                str(exc)
+                "Stock Movement Rejected",
+                str(e)
+            )
+
+        except Exception as e:
+            self._show_message(
+                QMessageBox.Icon.Critical,
+                "Error",
+                f"Unable to record inventory movement:\n{e}"
             )
 
     def _adjustment_direction(self):
@@ -1911,5 +2679,8 @@ class InventoryView(QWidget):
 
 
     def refresh_all(self):
+        """Refresh all inventory screens after a stock change."""
         self.load_inventory()
         self.load_transactions()
+        self.load_dashboard()
+        self.load_reports()
