@@ -1,3 +1,5 @@
+from datetime import datetime
+from uuid import uuid4
 
 from PySide6.QtCore import Qt, Signal
 
@@ -12,9 +14,12 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QStackedWidget,
     QSizePolicy,
+    QMessageBox,
 )
 
+from src.models.sale import Sale
 from src.views.sale_view import SaleView
+from src.views.checkout_dialog import CheckoutDialog
 from src.views.product_view import ProductManagementView
 from src.views.user_management_view import UserManagementView
 from src.views.role_management_view import RoleManagementView
@@ -28,9 +33,9 @@ class MainWindow(QMainWindow):
     Features:
         - Dynamic RBAC navigation
         - Permission-based dashboard
-        - POS integration
-        - User Management integration
-        - Role Management integration
+        - POS checkout integration
+        - Product and inventory integration
+        - User and role management
         - Session logout
         - Green application theme
     """
@@ -123,7 +128,7 @@ class MainWindow(QMainWindow):
         user_management_service,
         role_management_service,
         product_service,
-        inventory_service
+        inventory_service,
     ):
         super().__init__()
 
@@ -147,9 +152,11 @@ class MainWindow(QMainWindow):
         )
 
         self.current_page = None
-
         self.page_widgets = {}
         self.navigation_buttons = {}
+
+        # POS page reference
+        self.sale_view = None
 
         # Window configuration
         self.setWindowTitle("POS Management System")
@@ -171,39 +178,30 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         main_layout = QHBoxLayout(central_widget)
-
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
         # Sidebar
         self.sidebar = self._build_sidebar()
-
         main_layout.addWidget(self.sidebar)
 
         # Main content
         content_container = QWidget()
-
         content_layout = QVBoxLayout(content_container)
 
-        content_layout.setContentsMargins(
-            28, 22, 28, 22
-        )
-
+        content_layout.setContentsMargins(28, 22, 28, 22)
         content_layout.setSpacing(20)
 
         # Header
         self.header = self._build_header()
-
         content_layout.addWidget(self.header)
 
         # Page stack
         self.page_stack = QStackedWidget()
-
         self.page_stack.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-
         content_layout.addWidget(self.page_stack)
 
         main_layout.addWidget(content_container, 1)
@@ -219,11 +217,7 @@ class MainWindow(QMainWindow):
         sidebar.setFixedWidth(250)
 
         layout = QVBoxLayout(sidebar)
-
-        layout.setContentsMargins(
-            16, 24, 16, 20
-        )
-
+        layout.setContentsMargins(16, 24, 16, 20)
         layout.setSpacing(12)
 
         # Branding
@@ -235,19 +229,16 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(logo)
         layout.addWidget(subtitle)
-
         layout.addSpacing(25)
 
         # Menu heading
         menu_label = QLabel("MAIN MENU")
         menu_label.setObjectName("menu_label")
-
         layout.addWidget(menu_label)
 
         # Navigation container
         self.navigation_layout = QVBoxLayout()
         self.navigation_layout.setSpacing(6)
-
         layout.addLayout(self.navigation_layout)
 
         layout.addStretch()
@@ -257,18 +248,14 @@ class MainWindow(QMainWindow):
             f"{self.session.full_name}\n"
             f"@{self.session.username}"
         )
-
         user_label.setObjectName("sidebar_user")
         user_label.setWordWrap(True)
-
         layout.addWidget(user_label)
 
         # Logout
         logout_button = QPushButton("↪   Logout")
         logout_button.setObjectName("logout_button")
-
         logout_button.clicked.connect(self.logout)
-
         layout.addWidget(logout_button)
 
         return sidebar
@@ -280,7 +267,6 @@ class MainWindow(QMainWindow):
     def _build_header(self):
 
         header = QWidget()
-
         layout = QHBoxLayout(header)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -296,6 +282,7 @@ class MainWindow(QMainWindow):
         self.sidebar_toggle_button.clicked.connect(
             self.toggle_sidebar
         )
+
         layout.addWidget(self.sidebar_toggle_button)
         layout.addSpacing(12)
 
@@ -308,7 +295,6 @@ class MainWindow(QMainWindow):
         self.page_subtitle = QLabel(
             "Welcome to your POS management system."
         )
-
         self.page_subtitle.setObjectName("page_subtitle")
 
         title_container.addWidget(self.page_title)
@@ -321,31 +307,31 @@ class MainWindow(QMainWindow):
         self.user_badge = QLabel(
             f"●  {self.session.username}"
         )
-
         self.user_badge.setObjectName("user_badge")
-
         layout.addWidget(self.user_badge)
 
         return header
 
     def toggle_sidebar(self):
         """Hide or restore the navigation sidebar."""
+
         show_sidebar = self.sidebar.isHidden()
         self.sidebar.setVisible(show_sidebar)
 
         action = "Hide" if show_sidebar else "Show"
         accessible_name = f"{action} navigation"
+
         self.sidebar_toggle_button.setToolTip(accessible_name)
-        self.sidebar_toggle_button.setAccessibleName(accessible_name)
+        self.sidebar_toggle_button.setAccessibleName(
+            accessible_name
+        )
 
     # ==========================================
     # RBAC NAVIGATION
     # ==========================================
 
     def _build_navigation(self):
-        """
-        Build navigation based on user permissions.
-        """
+        """Build navigation based on user permissions."""
 
         for icon, label, permission, page_key in self.PAGE_CONFIG:
 
@@ -357,7 +343,6 @@ class MainWindow(QMainWindow):
             button = QPushButton(
                 f"  {icon}     {label}"
             )
-
             button.setObjectName("nav_button")
             button.setCheckable(True)
 
@@ -367,17 +352,11 @@ class MainWindow(QMainWindow):
             )
 
             self.navigation_layout.addWidget(button)
-
             self.navigation_buttons[page_key] = button
 
-            # Create page
-            page = self._create_page(
-                page_key,
-                label
-            )
-
+            # Create and register page
+            page = self._create_page(page_key, label)
             self.page_widgets[page_key] = page
-
             self.page_stack.addWidget(page)
 
         self._select_initial_page()
@@ -389,17 +368,13 @@ class MainWindow(QMainWindow):
     def _select_initial_page(self):
 
         if "dashboard" in self.page_widgets:
-
             self.show_page("dashboard")
 
         elif self.page_widgets:
-
             first_page = next(iter(self.page_widgets))
-
             self.show_page(first_page)
 
         else:
-
             self.show_access_denied()
 
     # ==========================================
@@ -407,54 +382,197 @@ class MainWindow(QMainWindow):
     # ==========================================
 
     def _create_page(self, page_key, title):
-        """
-        Return the correct view for each module.
-        """
+        """Return the correct view for each module."""
 
-        # Dashboard
         if page_key == "dashboard":
-
             return self._build_dashboard_page()
 
         # Point of Sale
         if page_key == "sales":
 
-            return SaleView(
+            self.sale_view = SaleView(
                 sale_service=self.sale_service,
                 product_service=self.product_service,
             )
 
-        if page_key == "products":
+            self.sale_view.checkout_requested.connect(
+                self.handle_checkout
+            )
 
+            return self.sale_view
+
+        if page_key == "products":
             return ProductManagementView(
                 product_service=self.product_service,
             )
-            
+
         if page_key == "inventory":
             return InventoryView(
                 inventory_service=self.inventory_service
             )
 
-        # User Management
         if page_key == "users":
-
             return UserManagementView(
                 user_management_service=self.user_management_service,
                 current_user_id=self.session.user_id,
             )
 
-        # Role Management
         if page_key == "roles":
-
             return RoleManagementView(
                 role_management_service=self.role_management_service,
             )
 
-        # Other modules: temporary placeholders
-        return self._build_placeholder_page(
-            page_key,
-            title
+        return self._build_placeholder_page(page_key, title)
+
+    # ==========================================
+    # POS CHECKOUT
+    # ==========================================
+
+    def handle_checkout(self):
+        """Validate the cart, collect payment, and create the sale."""
+
+        if self.sale_view is None:
+            return
+
+        cart_items = list(self.sale_view.cart_items)
+
+        if not cart_items:
+            QMessageBox.warning(
+                self,
+                "Empty Cart",
+                "Please add products before checkout.",
+            )
+            return
+
+        if self.sale_service is None:
+            QMessageBox.critical(
+                self,
+                "Configuration Error",
+                "Sale service is not connected.",
+            )
+            return
+
+        # Calculate current cart total.
+        subtotal = sum(
+            int(item["price"]) * int(item["quantity"])
+            for item in cart_items
         )
+
+        discount_amount = 0
+        tax_amount = 0
+        total_amount = (
+            subtotal - discount_amount + tax_amount
+        )
+
+        if total_amount <= 0:
+            QMessageBox.warning(
+                self,
+                "Invalid Total",
+                "The sale total must be greater than zero.",
+            )
+            return
+
+        # Collect payment details.
+        dialog = CheckoutDialog(
+            total_amount=total_amount,
+            parent=self,
+        )
+
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+
+        # Generate a unique sale number.
+        sale_number = (
+            "SALE-"
+            + datetime.now().strftime("%Y%m%d%H%M%S")
+            + "-"
+            + uuid4().hex[:6].upper()
+        )
+
+        try:
+            sale = Sale(
+                sale_number=sale_number,
+                subtotal=subtotal,
+                discount_amount=discount_amount,
+                tax_amount=tax_amount,
+                total_amount=total_amount,
+                cashier_user_id=self.session.user_id,
+                sale_status="COMPLETED",
+            )
+
+            # Convert cart rows to the SaleService contract.
+            items = [
+                {
+                    "variant_id": int(item["variant_id"]),
+                    "quantity": int(item["quantity"]),
+                    "discount_amount": 0,
+                }
+                for item in cart_items
+            ]
+
+            payment_data = dialog.get_payment_data()
+
+            # SaleService handles sale, payment, stock deduction,
+            # and inventory transaction history atomically.
+            result = self.sale_service.create_sale(
+                sale=sale,
+                items=items,
+                payment=payment_data,
+            )
+
+            # Clear cart only after create_sale succeeds.
+            self.sale_view.reset_after_checkout()
+
+            change_amount = dialog.get_change_amount()
+
+            message = (
+                "Sale completed successfully!\n\n"
+                f"Sale Number: {result['sale_number']}\n"
+                f"Sale ID: {result['sale_id']}\n"
+                f"Total: {total_amount:,} MMK\n"
+                f"Payment Method: "
+                f"{payment_data['payment_method']}"
+            )
+
+            if change_amount > 0:
+                message += (
+                    f"\nChange: {change_amount:,} MMK"
+                )
+
+            success_dialog = QMessageBox(self)
+            success_dialog.setIcon(QMessageBox.Icon.Information)
+            success_dialog.setWindowTitle("Checkout Successful")
+            success_dialog.setText("Sale completed successfully!")
+            success_dialog.setInformativeText(message.split("\n\n", 1)[-1])
+            success_dialog.setStyleSheet("""
+                QMessageBox {
+                    background-color: #F5F7F5;
+                    color: #26352C;
+                }
+                QMessageBox QLabel {
+                    color: #26352C;
+                    min-width: 360px;
+                }
+                QMessageBox QPushButton {
+                    background-color: #E4EEE7;
+                    color: #203D2E;
+                    border: 1px solid #D0DDD4;
+                    border-radius: 6px;
+                    padding: 8px 18px;
+                    min-width: 80px;
+                }
+                QMessageBox QPushButton:hover {
+                    background-color: #D6EBDD;
+                }
+            """)
+            success_dialog.exec()
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Checkout Failed",
+                str(exc),
+            )
 
     # ==========================================
     # PLACEHOLDER PAGE
@@ -463,7 +581,6 @@ class MainWindow(QMainWindow):
     def _build_placeholder_page(self, page_key, title):
 
         page = QWidget()
-
         layout = QVBoxLayout(page)
 
         layout.setContentsMargins(0, 10, 0, 0)
@@ -478,7 +595,6 @@ class MainWindow(QMainWindow):
                 f"Manage {title.lower()}.",
             )
         )
-
         description.setObjectName("page_subtitle")
 
         layout.addWidget(heading)
@@ -494,7 +610,6 @@ class MainWindow(QMainWindow):
     def _build_dashboard_page(self):
 
         page = QWidget()
-
         layout = QVBoxLayout(page)
 
         layout.setContentsMargins(0, 10, 0, 0)
@@ -503,15 +618,12 @@ class MainWindow(QMainWindow):
         # Heading
         heading = QLabel("Business Overview")
         heading.setObjectName("section_title")
-
         layout.addWidget(heading)
 
         description = QLabel(
             "Here is an overview of your business."
         )
-
         description.setObjectName("page_subtitle")
-
         layout.addWidget(description)
 
         # Dashboard statistics
@@ -530,11 +642,7 @@ class MainWindow(QMainWindow):
             card.setObjectName("stat_card")
 
             card_layout = QVBoxLayout(card)
-
-            card_layout.setContentsMargins(
-                20, 18, 20, 18
-            )
-
+            card_layout.setContentsMargins(20, 18, 20, 18)
             card_layout.setSpacing(8)
 
             card_title = QLabel(card_data["title"])
@@ -557,18 +665,13 @@ class MainWindow(QMainWindow):
             )
 
         if authorized_cards:
-
             layout.addLayout(grid)
-
         else:
-
             no_widgets = QLabel(
                 "No dashboard widgets are available "
                 "for your permissions."
             )
-
             no_widgets.setObjectName("page_subtitle")
-
             layout.addWidget(no_widgets)
 
         # Recent transactions
@@ -583,23 +686,17 @@ class MainWindow(QMainWindow):
             transactions.setObjectName("stat_card")
 
             transaction_layout = QVBoxLayout(transactions)
-
             transaction_layout.setContentsMargins(
                 20, 18, 20, 18
             )
-
             transaction_layout.setSpacing(12)
 
-            transaction_title = QLabel(
-                "Recent Transactions"
-            )
-
+            transaction_title = QLabel("Recent Transactions")
             transaction_title.setObjectName("section_title")
 
             transaction_message = QLabel(
                 "Transaction records will appear here."
             )
-
             transaction_message.setObjectName("page_subtitle")
 
             transaction_layout.addWidget(transaction_title)
@@ -608,7 +705,6 @@ class MainWindow(QMainWindow):
             layout.addWidget(transactions)
 
         layout.addStretch()
-
         return page
 
     # ==========================================
@@ -616,39 +712,29 @@ class MainWindow(QMainWindow):
     # ==========================================
 
     def show_page(self, page_key):
-        """
-        Display an authorized page.
-        """
+        """Display an authorized page."""
 
-        required_permission = self.PAGE_PERMISSIONS.get(
-            page_key
-        )
+        required_permission = self.PAGE_PERMISSIONS.get(page_key)
 
-        # Validate page
         if required_permission is None:
             return
 
-        # Validate permission
         if required_permission not in self.permissions:
             return
 
-        # Validate page availability
         if page_key not in self.page_widgets:
             return
 
         self.current_page = page_key
 
-        # Display page
         page = self.page_widgets[page_key]
-
         self.page_stack.setCurrentWidget(page)
 
-        # Update navigation selection
+        # Update navigation selection.
         for key, button in self.navigation_buttons.items():
-
             button.setChecked(key == page_key)
 
-        # Update header
+        # Update header.
         self.page_title.setText(
             self.PAGE_TITLES.get(
                 page_key,
@@ -657,10 +743,7 @@ class MainWindow(QMainWindow):
         )
 
         self.page_subtitle.setText(
-            self.PAGE_DESCRIPTIONS.get(
-                page_key,
-                "",
-            )
+            self.PAGE_DESCRIPTIONS.get(page_key, "")
         )
 
     # ==========================================
@@ -670,7 +753,6 @@ class MainWindow(QMainWindow):
     def show_access_denied(self):
 
         page = QWidget()
-
         layout = QVBoxLayout(page)
 
         layout.addStretch()
@@ -679,15 +761,10 @@ class MainWindow(QMainWindow):
             "You do not have permission "
             "to access any module."
         )
-
-        message.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-
+        message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         message.setObjectName("section_title")
 
         layout.addWidget(message)
-
         layout.addStretch()
 
         self.page_stack.addWidget(page)
@@ -696,7 +773,6 @@ class MainWindow(QMainWindow):
         self.current_page = None
 
         self.page_title.setText("Access Denied")
-
         self.page_subtitle.setText(
             "Contact your administrator for access."
         )
@@ -706,14 +782,10 @@ class MainWindow(QMainWindow):
     # ==========================================
 
     def logout(self):
-        """
-        End current session and return to login.
-        """
+        """End current session and return to login."""
 
         self.session_manager.end()
-
         self.logout_requested.emit()
-
         self.close()
 
     # ==========================================
@@ -723,7 +795,6 @@ class MainWindow(QMainWindow):
     def _get_stylesheet(self):
 
         return """
-
         /* MAIN WINDOW */
 
         QMainWindow {
@@ -868,5 +939,4 @@ class MainWindow(QMainWindow):
             color: #9AA69D;
             font-size: 11px;
         }
-
         """

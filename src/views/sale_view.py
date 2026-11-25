@@ -643,6 +643,22 @@ class SaleView(QWidget):
         self.cart_items.clear()
 
         self._refresh_cart()
+        
+        
+    def reset_after_checkout(self):
+        """Reset the cart after a successful checkout."""
+        self.cart_items.clear()
+        self._refresh_cart()
+
+        keyword = self.search_input.text().strip()
+
+        if keyword:
+            self._search_products()
+        else:
+            self._product_results = []
+            self._show_product_card_message(
+                "Search for a product to see available items."
+            )
 
     # ==========================================
     # REFRESH CART DISPLAY
