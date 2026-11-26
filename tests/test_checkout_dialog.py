@@ -27,7 +27,7 @@ class CheckoutDialogTests(unittest.TestCase):
 
         note_button = next(
             button
-            for button in dialog.cash_denominations_group.findChildren(
+            for button in dialog.cash_group.findChildren(
                 QPushButton
             )
             if button.text() == "10,000 MMK"

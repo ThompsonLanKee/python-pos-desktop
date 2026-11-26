@@ -99,10 +99,12 @@ class CheckoutDialog(QDialog):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setObjectName("cash_notes_scroll")
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setMinimumHeight(220)
         scroll.setMaximumHeight(275)
         note_container = QWidget()
+        note_container.setObjectName("note_container")
         notes_grid = QGridLayout(note_container)
         notes_grid.setContentsMargins(2, 2, 2, 2)
         notes_grid.setSpacing(9)
@@ -117,8 +119,8 @@ class CheckoutDialog(QDialog):
             button = QPushButton()
             button.setObjectName("cash_note_button")
             button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.setMinimumHeight(75)
-            button.setIconSize(QSize(145, 48))
+            button.setMinimumHeight(80)
+            button.setIconSize(QSize(165, 52))
             button.setToolTip(f"Add one {denomination:,} MMK banknote")
             image_path = self.cash_image_directory / f"{denomination}ks.png"
             if image_path.is_file():
@@ -132,6 +134,10 @@ class CheckoutDialog(QDialog):
             quantity.setRange(0, 1_000_000)
             quantity.setPrefix("Qty: ")
             quantity.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            quantity.lineEdit().setStyleSheet(
+                "selection-background-color: #DCEBE0; "
+                "selection-color: #203D2E;"
+            )
             quantity.valueChanged.connect(self._update_cash_from_denominations)
             self.denomination_spins[denomination] = quantity
             self.denomination_buttons[denomination] = button
@@ -185,14 +191,17 @@ class CheckoutDialog(QDialog):
             QLabel#checkout_change { color: #315D40; font-size: 16px; font-weight: bold; }
             QLabel#checkout_validation { color: #A94442; font-weight: bold; }
             QComboBox, QLineEdit, QSpinBox { background: white; color: #26352C; border: 1px solid #D5E0D8; border-radius: 6px; padding: 7px 9px; min-height: 24px; }
+            QLineEdit { selection-background-color: #DCEBE0; selection-color: #203D2E; }
             QComboBox:focus, QLineEdit:focus, QSpinBox:focus { border: 1px solid #5D8B6B; }
             QWidget#note_card { background: white; border: 1px solid #DFE8E1; border-radius: 7px; }
+            QWidget#note_container { background: #F5F7F5; }
             QPushButton#cash_note_button { background: #F1F6F2; color: #203D2E; border: 1px solid #D6E3D9; border-radius: 5px; font-weight: bold; padding: 5px; }
             QPushButton#cash_note_button:hover { background: #E2EEE5; border: 1px solid #9FBEA8; }
             QPushButton#secondary_button, QDialogButtonBox QPushButton { background: #EAF1EC; color: #203D2E; border: 1px solid #D0DDD4; border-radius: 6px; padding: 8px 15px; min-width: 85px; }
             QPushButton#confirm_button { background: #315D40; color: white; border: none; border-radius: 6px; padding: 9px 18px; min-width: 125px; font-weight: bold; }
             QPushButton#confirm_button:hover { background: #264C34; }
-            QScrollArea { background: transparent; }
+            QScrollArea#cash_notes_scroll { background: #F5F7F5; border: none; }
+            QScrollArea#cash_notes_scroll QWidget#qt_scrollarea_viewport { background: #F5F7F5; border: none; }
         """)
 
     def _connect_signals(self):
